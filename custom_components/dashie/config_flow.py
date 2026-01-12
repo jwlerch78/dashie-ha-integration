@@ -42,8 +42,15 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._host = parsed.hostname
         self._port = parsed.port or DEFAULT_PORT
 
-        # Get device name from SSDP headers
+        # Get device name and HA URL from SSDP headers
         device_name = discovery_info.upnp.get("X-DASHIE-NAME", "Dashie Lite")
+        configured_ha_url = discovery_info.upnp.get("X-DASHIE-HA-URL")
+
+        # Optional: Check if this tablet is configured to connect to THIS HA instance
+        # This helps filter discovery on networks with multiple HA instances
+        if configured_ha_url:
+            _LOGGER.debug("Tablet configured for HA URL: %s", configured_ha_url)
+            # Could compare to self.hass.config.api.base_url if strict filtering desired
 
         # Fetch device info to get unique ID
         try:
