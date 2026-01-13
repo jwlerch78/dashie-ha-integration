@@ -19,6 +19,7 @@ API_SCREEN_OFF = "screenOff"
 API_LOAD_START_URL = "loadStartUrl"
 API_BRING_TO_FOREGROUND = "toForeground"
 API_SET_BRIGHTNESS = "setStringSetting"
+API_SET_VOLUME = "setAudioVolume"
 API_LOCK_KIOSK = "lockKiosk"
 API_UNLOCK_KIOSK = "unlockKiosk"
 

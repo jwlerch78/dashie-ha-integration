@@ -52,6 +52,14 @@
       "foreground": {
         "name": "Bring to Foreground"
       }
+    },
+    "number": {
+      "brightness_control": {
+        "name": "Brightness"
+      },
+      "volume": {
+        "name": "Volume"
+      }
     }
   }
 }
