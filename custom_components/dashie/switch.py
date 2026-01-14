@@ -1,6 +1,7 @@
 """Switch entities for Dashie Lite integration."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchDeviceClass
@@ -21,6 +22,8 @@ from .const import (
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -34,7 +37,7 @@ async def async_setup_entry(
     entities = [
         DashieScreenSwitch(coordinator, device_id),
         DashieScreensaverSwitch(coordinator, device_id),
-        DashieKioskLockSwitch(coordinator, device_id),
+        DashieLockSwitch(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -55,19 +58,14 @@ class DashieScreenSwitch(DashieEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return true if screen is on and not in screensaver."""
+        """Return true if screen is on (not in black/off state)."""
         if self.coordinator.data:
-            is_screen_on = self.coordinator.data.get("isScreenOn", False)
-            is_in_screensaver = self.coordinator.data.get("isInScreensaver", False)
-            # Screen is considered "on" only if screen is on AND not in screensaver
-            return is_screen_on and not is_in_screensaver
+            # isScreenOn is False only when in true "screen off" black mode
+            return self.coordinator.data.get("isScreenOn", False)
         return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the screen on."""
-        # If in screensaver mode, stop it first, then turn screen on
-        if self.coordinator.data and self.coordinator.data.get("isInScreensaver"):
-            await self.coordinator.send_command(API_STOP_SCREENSAVER)
+        """Turn the screen on (wake from black/off state)."""
         await self.coordinator.send_command(API_SCREEN_ON)
         await self.coordinator.async_request_refresh()
 
@@ -108,18 +106,18 @@ class DashieScreensaverSwitch(DashieEntity, SwitchEntity):
         await self.coordinator.async_request_refresh()
 
 
-class DashieKioskLockSwitch(DashieEntity, SwitchEntity):
-    """Kiosk lock switch."""
+class DashieLockSwitch(DashieEntity, SwitchEntity):
+    """Lock switch (PIN required if set)."""
 
     _attr_device_class = SwitchDeviceClass.SWITCH
     _attr_icon = "mdi:lock"
-    _attr_translation_key = "kiosk_lock"
+    _attr_translation_key = "lock"
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the switch."""
         super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{device_id}_kiosk_lock"
-        self._attr_name = "Kiosk Lock"
+        self._attr_unique_id = f"{device_id}_lock"
+        self._attr_name = "Lock"
 
     @property
     def is_on(self) -> bool | None:
@@ -134,6 +132,6 @@ class DashieKioskLockSwitch(DashieEntity, SwitchEntity):
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Unlock the kiosk."""
+        """Unlock the kiosk (API password is authentication, PIN not required)."""
         await self.coordinator.send_command(API_UNLOCK_KIOSK)
         await self.coordinator.async_request_refresh()

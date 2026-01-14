@@ -26,6 +26,7 @@ async def async_setup_entry(
     entities = [
         DashiePluggedSensor(coordinator, device_id),
         DashieScreensaverSensor(coordinator, device_id),
+        DashiePinSetSensor(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -78,4 +79,25 @@ class DashieScreensaverSensor(DashieEntity, BinarySensorEntity):
         """Return true if screensaver is active."""
         if self.coordinator.data:
             return self.coordinator.data.get("isInScreensaver", False)
+        return None
+
+
+class DashiePinSetSensor(DashieEntity, BinarySensorEntity):
+    """PIN set binary sensor."""
+
+    _attr_device_class = BinarySensorDeviceClass.LOCK
+    _attr_icon = "mdi:form-textbox-password"
+    _attr_translation_key = "pin_set"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_pin_set"
+        self._attr_name = "PIN Set"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if PIN is set."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("hasPinSet", False)
         return None

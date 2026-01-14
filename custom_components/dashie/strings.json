@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "confirm": {
-        "title": "Dashie Lite Discovered",
+        "title": "Dashie Device Discovered",
         "description": "Do you want to set up **{name}** at `{host}`?"
       },
       "password": {
@@ -13,8 +13,8 @@
         }
       },
       "user": {
-        "title": "Add Dashie Lite Device",
-        "description": "Enter the IP address of your Dashie Lite device.",
+        "title": "Add Dashie Device",
+        "description": "Enter the IP address of your Dashie device.",
         "data": {
           "host": "Host",
           "port": "Port",
@@ -50,8 +50,30 @@
       "screen": {
         "name": "Screen"
       },
-      "kiosk_lock": {
-        "name": "Kiosk Lock"
+      "screensaver": {
+        "name": "Screensaver"
+      },
+      "lock": {
+        "name": "Lock"
+      }
+    },
+    "binary_sensor": {
+      "plugged": {
+        "name": "Plugged In"
+      },
+      "screensaver_active": {
+        "name": "Screensaver Active"
+      },
+      "pin_set": {
+        "name": "PIN Set"
+      }
+    },
+    "text": {
+      "load_url": {
+        "name": "Load URL"
+      },
+      "pin": {
+        "name": "Lock PIN"
       }
     },
     "button": {

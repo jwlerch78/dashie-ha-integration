@@ -31,6 +31,18 @@ class DashieCoordinator(DataUpdateCoordinator):
         self.password = password
         self.base_url = f"http://{host}:{port}"
         self._consecutive_failures = 0
+        # Store PIN for unlocking (set when user configures PIN via HA)
+        self._stored_pin: str = ""
+
+    @property
+    def stored_pin(self) -> str:
+        """Return the stored PIN for unlocking."""
+        return self._stored_pin
+
+    def set_stored_pin(self, pin: str) -> None:
+        """Store the PIN for use when unlocking."""
+        self._stored_pin = pin
+        _LOGGER.debug("Stored PIN updated")
 
     async def _async_update_data(self) -> dict:
         """Fetch data from Dashie Lite device."""

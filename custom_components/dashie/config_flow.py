@@ -43,9 +43,29 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._host = parsed.hostname
         self._port = parsed.port or DEFAULT_PORT
 
+        # Check if we already have an entry with this host IP
+        # This catches devices that were configured before we had proper unique_id handling,
+        # or where unique_id changed (e.g., device_id vs ssdp_uuid mismatch)
+        for entry in self._async_current_entries():
+            if entry.data.get(CONF_HOST) == self._host:
+                _LOGGER.debug("Device at %s already configured (entry: %s)", self._host, entry.entry_id)
+                return self.async_abort(reason="already_configured")
+
         # Get device name and HA URL from SSDP headers
         device_name = discovery_info.upnp.get("X-DASHIE-NAME", "Dashie Lite")
         configured_ha_url = discovery_info.upnp.get("X-DASHIE-HA-URL")
+
+        # Extract UUID from USN header (format: uuid:xxx::urn:dashie:service:DashieLite:1)
+        usn = discovery_info.ssdp_usn or ""
+        ssdp_uuid = None
+        if usn.startswith("uuid:"):
+            # Extract just the UUID part before the "::" separator
+            ssdp_uuid = usn.split("::")[0].replace("uuid:", "")
+
+        # Set unique_id early from SSDP UUID to prevent duplicate discoveries
+        if ssdp_uuid:
+            await self.async_set_unique_id(ssdp_uuid)
+            self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
 
         # Optional: Check if this tablet is configured to connect to THIS HA instance
         if configured_ha_url:
@@ -57,6 +77,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             device_id = self._device_info.get("deviceID")
 
             if device_id:
+                # Update unique_id with actual device_id (more reliable than UUID)
                 await self.async_set_unique_id(device_id)
                 self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
 
@@ -67,6 +88,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except aiohttp.ClientResponseError as err:
             if err.status == 401:
                 # Password required - go to password step
+                # Note: unique_id was already set from SSDP UUID above
                 self.context["title_placeholders"] = {"name": device_name}
                 return await self.async_step_password()
             raise

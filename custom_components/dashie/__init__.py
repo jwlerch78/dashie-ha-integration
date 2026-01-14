@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     DOMAIN,
@@ -43,6 +44,27 @@ SERVICE_SPEAK = "speak"
 SERVICE_SET_BRIGHTNESS = "set_brightness"
 SERVICE_SET_VOLUME = "set_volume"
 SERVICE_SHOW_MESSAGE = "show_message"
+
+# Allow loading without config entry (for Photo Hub standalone)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up the Dashie integration (runs even without config entries)."""
+    hass.data.setdefault(DOMAIN, {})
+
+    # Initialize Photo Hub on integration load (works without devices)
+    if "photo_hub" not in hass.data[DOMAIN]:
+        photo_hub = PhotoHub(hass)
+        if await photo_hub.async_initialize():
+            hass.data[DOMAIN]["photo_hub"] = photo_hub
+            register_photo_api_views(hass)
+            register_panel(hass)
+            _LOGGER.info("Photo Hub initialized (standalone mode)")
+        else:
+            _LOGGER.warning("Failed to initialize Photo Hub")
+
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

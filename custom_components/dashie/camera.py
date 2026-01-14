@@ -40,6 +40,7 @@ class DashieCamera(DashieEntity, Camera):
 
     _attr_supported_features = CameraEntityFeature.STREAM
     _attr_translation_key = "camera"
+    _attr_frame_interval = 10  # Seconds between thumbnail updates
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the camera."""
@@ -49,6 +50,7 @@ class DashieCamera(DashieEntity, Camera):
         self._attr_name = "Camera"
         self._attr_is_streaming = False
         self._stream_url: str | None = None
+        self._last_image: bytes | None = None
 
     @property
     def is_on(self) -> bool:
@@ -76,15 +78,21 @@ class DashieCamera(DashieEntity, Camera):
 
                 async with session.get(url) as response:
                     if response.status == 200:
-                        return await response.read()
+                        content_type = response.headers.get("Content-Type", "")
+                        if "image" in content_type:
+                            self._last_image = await response.read()
+                            return self._last_image
+                        # API returned JSON error instead of image
+                        _LOGGER.debug("Camera returned non-image response")
+                        return self._last_image  # Return cached image if available
                     _LOGGER.warning("Failed to get camera image: %s", response.status)
-                    return None
+                    return self._last_image
         except asyncio.TimeoutError:
             _LOGGER.warning("Timeout getting camera image from %s", self.coordinator.host)
-            return None
+            return self._last_image
         except aiohttp.ClientError as err:
             _LOGGER.warning("Error getting camera image: %s", err)
-            return None
+            return self._last_image
 
     async def stream_source(self) -> str | None:
         """Return the stream source URL."""

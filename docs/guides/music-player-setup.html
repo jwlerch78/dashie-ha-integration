@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Player Setup for Dashie Lite | Dashie Guides</title>
+    <meta name="description" content="Set up Spotify, Pandora, or other music services to play through your Dashie Lite tablet speakers while keeping the dashboard visible.">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #fafafa;
+        }
+
+        .nav-bar {
+            background: #1a1a2e;
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-bar .logo {
+            color: #ffaa00;
+            font-size: 1.5rem;
+            font-weight: bold;
+            text-decoration: none;
+        }
+
+        .nav-links a {
+            color: #fff;
+            text-decoration: none;
+            margin-left: 2rem;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: #ffaa00;
+        }
+
+        .breadcrumb {
+            max-width: 800px;
+            margin: 1rem auto;
+            padding: 0 1rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .breadcrumb a {
+            color: #ffaa00;
+            text-decoration: none;
+        }
+
+        .article {
+            max-width: 800px;
+            margin: 0 auto 3rem;
+            padding: 0 1rem;
+        }
+
+        .article-header {
+            margin-bottom: 2rem;
+        }
+
+        .article-header h1 {
+            font-size: 2.2rem;
+            color: #1a1a2e;
+            margin-bottom: 0.5rem;
+        }
+
+        .article-header .meta {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .article-content h2 {
+            font-size: 1.5rem;
+            color: #1a1a2e;
+            margin: 2rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 3px solid #ffaa00;
+        }
+
+        .article-content h3 {
+            font-size: 1.2rem;
+            color: #1a1a2e;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        .article-content p {
+            margin-bottom: 1rem;
+        }
+
+        .article-content ul, .article-content ol {
+            margin: 1rem 0 1rem 2rem;
+        }
+
+        .article-content li {
+            margin-bottom: 0.5rem;
+        }
+
+        .info-box {
+            padding: 1rem 1.25rem;
+            margin: 1.5rem 0;
+            border-radius: 8px;
+            border-left: 4px solid;
+        }
+
+        .info-box.tip {
+            background: #e8f5e9;
+            border-color: #4caf50;
+        }
+
+        .info-box.warning {
+            background: #fff3e0;
+            border-color: #ff9800;
+        }
+
+        .info-box.important {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+
+        .info-box h4 {
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+        }
+
+        .info-box p {
+            margin-bottom: 0;
+            font-size: 0.95rem;
+        }
+
+        .step {
+            display: flex;
+            gap: 1.25rem;
+            margin: 1.5rem 0;
+            align-items: flex-start;
+        }
+
+        .step-number {
+            background: #ffaa00;
+            color: #1a1a2e;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .step-content h4 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: #1a1a2e;
+        }
+
+        .step-content p {
+            color: #555;
+            margin-bottom: 0.5rem;
+        }
+
+        .requirements {
+            background: #f5f5f5;
+            padding: 1.25rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+        }
+
+        .requirements h4 {
+            margin-bottom: 0.75rem;
+        }
+
+        .requirements ul {
+            margin: 0 0 0 1.5rem;
+        }
+
+        .architecture-diagram {
+            background: #1a1a2e;
+            color: #fff;
+            padding: 1.5rem;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            margin: 1.5rem 0;
+            line-height: 1.4;
+        }
+
+        .architecture-diagram .highlight {
+            color: #ffaa00;
+        }
+
+        .architecture-diagram .comment {
+            color: #888;
+        }
+
+        code {
+            background: #f0f0f0;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .code-block {
+            background: #1a1a2e;
+            color: #fff;
+            padding: 1rem 1.25rem;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        .code-block .comment { color: #6a9955; }
+        .code-block .key { color: #9cdcfe; }
+        .code-block .string { color: #ce9178; }
+        .code-block .keyword { color: #569cd6; }
+
+        .image-placeholder {
+            background: #e0e0e0;
+            border: 2px dashed #999;
+            border-radius: 8px;
+            padding: 3rem 1rem;
+            text-align: center;
+            color: #666;
+            margin: 1.5rem 0;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 0.75rem 1rem;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+
+        .comparison-table th {
+            background: #1a1a2e;
+            color: #fff;
+        }
+
+        .comparison-table tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
+        .footer {
+            background: #1a1a2e;
+            color: #fff;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .footer a {
+            color: #ffaa00;
+            text-decoration: none;
+        }
+
+        @media (max-width: 768px) {
+            .nav-bar {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .nav-links a {
+                margin: 0 1rem;
+            }
+
+            .article-header h1 {
+                font-size: 1.75rem;
+            }
+
+            .step {
+                flex-direction: column;
+            }
+
+            .architecture-diagram {
+                font-size: 0.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="nav-bar">
+        <a href="https://www.dashieapp.com" class="logo">Dashie</a>
+        <div class="nav-links">
+            <a href="https://www.dashieapp.com/#features">Features</a>
+            <a href="https://www.dashieapp.com/guides">Guides</a>
+            <a href="https://www.dashieapp.com/#download">Download</a>
+        </div>
+    </nav>
+
+    <div class="breadcrumb">
+        <a href="https://www.dashieapp.com">Home</a> /
+        <a href="https://www.dashieapp.com/guides">Guides</a> /
+        Music Player Setup
+    </div>
+
+    <article class="article">
+        <header class="article-header">
+            <h1>Setting Up Music Playback on Dashie Lite</h1>
+            <p class="meta">Play Spotify, Pandora, and other music through your tablet speakers</p>
+        </header>
+
+        <div class="article-content">
+            <p>
+                Dashie Lite tablets make excellent ambient music players for kitchens, offices, and living spaces.
+                This guide shows you how to set up Spotify (or other music services) to play through your tablet's
+                speakers while keeping the Dashie dashboard visible on screen.
+            </p>
+
+            <div class="info-box tip">
+                <h4>✓ Good News</h4>
+                <p>
+                    This setup works even when Dashie Lite is locked in kiosk mode. Music plays in the background
+                    while your dashboard stays on screen.
+                </p>
+            </div>
+
+            <!-- ==================== HOW IT WORKS ==================== -->
+            <h2>How It Works</h2>
+
+            <p>
+                Android allows music apps like Spotify to run as background services. When you start playback
+                (from your phone, Home Assistant, or any Spotify Connect device), the music plays through the
+                tablet's speakers even though Dashie Lite is the visible app.
+            </p>
+
+            <div class="architecture-diagram">
+<span class="comment">┌─────────────────────────────────────────────────────────────────┐</span>
+<span class="comment">│</span>  <span class="highlight">Your Control Device</span>                                              <span class="comment">│</span>
+<span class="comment">│</span>  (Phone, HA Dashboard, Alexa, etc.)                             <span class="comment">│</span>
+<span class="comment">│</span>                                                                  <span class="comment">│</span>
+<span class="comment">│</span>  "Play music on Kitchen Tablet"                                 <span class="comment">│</span>
+<span class="comment">└────────────────────────┬────────────────────────────────────────┘</span>
+                         │
+                         ▼
+<span class="comment">┌─────────────────────────────────────────────────────────────────┐</span>
+<span class="comment">│</span>  <span class="highlight">Spotify Cloud</span>                                                    <span class="comment">│</span>
+<span class="comment">│</span>                                                                  <span class="comment">│</span>
+<span class="comment">│</span>  Routes audio stream to selected device                         <span class="comment">│</span>
+<span class="comment">└────────────────────────┬────────────────────────────────────────┘</span>
+                         │
+                         ▼
+<span class="comment">┌─────────────────────────────────────────────────────────────────┐</span>
+<span class="comment">│</span>  <span class="highlight">Dashie Lite Tablet</span>                                               <span class="comment">│</span>
+<span class="comment">│</span>                                                                  <span class="comment">│</span>
+<span class="comment">│</span>  ┌──────────────────────┐    ┌──────────────────────┐           <span class="comment">│</span>
+<span class="comment">│</span>  │ <span class="highlight">Dashie Lite App</span>      │    │ Spotify App          │           <span class="comment">│</span>
+<span class="comment">│</span>  │ (Foreground)         │    │ (Background Service) │           <span class="comment">│</span>
+<span class="comment">│</span>  │                      │    │                      │           <span class="comment">│</span>
+<span class="comment">│</span>  │ Shows dashboard      │    │ Plays audio ───────────► 🔊     <span class="comment">│</span>
+<span class="comment">│</span>  │ Calendar, weather... │    │                      │           <span class="comment">│</span>
+<span class="comment">│</span>  └──────────────────────┘    └──────────────────────┘           <span class="comment">│</span>
+<span class="comment">└─────────────────────────────────────────────────────────────────┘</span>
+            </div>
+
+            <p>
+                The key insight: <strong>Dashie Lite's kiosk mode only prevents switching apps visually</strong>.
+                It doesn't stop background services like music playback from running.
+            </p>
+
+            <!-- ==================== PREREQUISITES ==================== -->
+            <h2>Prerequisites</h2>
+
+            <div class="requirements">
+                <h4>What You'll Need</h4>
+                <ul>
+                    <li>Dashie Lite installed on your Android tablet</li>
+                    <li>A Spotify Premium account (for Spotify Connect features)</li>
+                    <li>Google Play Store access on the tablet (to install Spotify)</li>
+                    <li>Optional: Home Assistant with Spotify integration (for HA dashboard control)</li>
+                </ul>
+            </div>
+
+            <div class="info-box important">
+                <h4>ℹ️ About Spotify Free</h4>
+                <p>
+                    Spotify Free accounts have limited remote control capabilities. For the best experience
+                    (controlling playback from your phone or Home Assistant), Spotify Premium is recommended.
+                </p>
+            </div>
+
+            <!-- ==================== PART 1: INSTALL SPOTIFY ==================== -->
+            <h2>Part 1: Install Spotify on Your Tablet</h2>
+
+            <p>First, we need to install the Spotify app on your Dashie Lite tablet.</p>
+
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h4>Temporarily Exit Kiosk Mode</h4>
+                    <p>
+                        If Dashie Lite is locked in kiosk mode, you'll need to exit temporarily.
+                        In Dashie Lite, go to <strong>Settings → Kiosk Mode</strong> and tap <strong>Disable Kiosk Lock</strong>.
+                    </p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h4>Open Google Play Store</h4>
+                    <p>
+                        Press the Home button or use the recent apps button to navigate to the Play Store.
+                        Search for "Spotify" and install it.
+                    </p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h4>Sign In to Spotify</h4>
+                    <p>
+                        Open the Spotify app and sign in with your account. This registers the tablet
+                        as a Spotify Connect device on your network.
+                    </p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <h4>Name Your Device (Optional)</h4>
+                    <p>
+                        In Spotify settings, you can rename the device to something memorable like
+                        "Kitchen Tablet" or "Office Dashboard". This makes it easier to find when
+                        selecting playback devices.
+                    </p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">5</div>
+                <div class="step-content">
+                    <h4>Return to Dashie Lite</h4>
+                    <p>
+                        Open Dashie Lite and re-enable kiosk mode if desired. Spotify will continue
+                        running in the background and remain available as a playback target.
+                    </p>
+                </div>
+            </div>
+
+            <div class="info-box warning">
+                <h4>⚠️ Battery Optimization</h4>
+                <p>
+                    Some tablets aggressively kill background apps to save battery. If music stops
+                    unexpectedly, go to <strong>Settings → Apps → Spotify → Battery</strong> and
+                    select "Unrestricted" or "Don't optimize".
+                </p>
+            </div>
+
+            <!-- ==================== PART 2: CONTROL FROM PHONE ==================== -->
+            <h2>Part 2: Control Music from Your Phone</h2>
+
+            <p>The simplest way to play music on your tablet is using Spotify Connect from your phone.</p>
+
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h4>Open Spotify on Your Phone</h4>
+                    <p>
+                        Make sure both your phone and tablet are on the same WiFi network.
+                    </p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h4>Tap the Device Icon</h4>
+                    <p>
+                        While playing or browsing music, tap the speaker/device icon at the bottom of the screen
+                        (or in the Now Playing view).
+                    </p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h4>Select Your Tablet</h4>
+                    <p>
+                        You'll see a list of available Spotify Connect devices. Select your tablet
+                        (e.g., "Kitchen Tablet"). Music will immediately start playing through the
+                        tablet's speakers.
+                    </p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <h4>Control Playback</h4>
+                    <p>
+                        You can now control play/pause, skip, volume, and queue from your phone.
+                        The tablet just plays the audio—all controls are on your phone.
+                    </p>
+                </div>
+            </div>
+
+            <!-- ==================== PART 3: HOME ASSISTANT ==================== -->
+            <h2>Part 3: Control Music from Home Assistant (Optional)</h2>
+
+            <p>
+                For the ultimate smart home experience, you can control tablet music playback directly
+                from your Home Assistant dashboard or via voice commands.
+            </p>
+
+            <h3>Step 3.1: Set Up Spotify Integration in HA</h3>
+
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h4>Add the Spotify Integration</h4>
+                    <p>
+                        In Home Assistant, go to <strong>Settings → Devices & Services → Add Integration</strong>
+                        and search for "Spotify". Follow the OAuth flow to connect your Spotify account.
+                    </p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h4>Verify Media Player Entity</h4>
+                    <p>
+                        After setup, you'll have a <code>media_player.spotify_your_name</code> entity.
+                        This entity can target any of your Spotify Connect devices, including your tablet.
+                    </p>
+                </div>
+            </div>
+
+            <h3>Step 3.2: Add a Spotify Card to Your Dashboard</h3>
+
+            <p>
+                Several excellent community cards provide Spotify control on your HA dashboard.
+                Here are the most popular options:
+            </p>
+
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Card</th>
+                        <th>Features</th>
+                        <th>Best For</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Mini Media Player</strong></td>
+                        <td>Compact, device selector, artwork</td>
+                        <td>General use, space-efficient</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Spotify Card</strong></td>
+                        <td>Full Spotify UI, playlists, search</td>
+                        <td>Spotify-focused dashboards</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Mushroom Media Card</strong></td>
+                        <td>Modern design, matches Mushroom theme</td>
+                        <td>Mushroom-styled dashboards</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <p>All of these can be installed via HACS (Home Assistant Community Store).</p>
+
+            <h3>Step 3.3: Example: Mini Media Player Card</h3>
+
+            <div class="code-block">
+<span class="key">type</span>: <span class="string">custom:mini-media-player</span>
+<span class="key">entity</span>: <span class="string">media_player.spotify_john</span>
+<span class="key">artwork</span>: <span class="string">cover</span>
+<span class="key">source</span>: <span class="string">icon</span>
+<span class="key">sound_mode</span>: <span class="string">icon</span>
+<span class="key">info</span>: <span class="string">short</span>
+            </div>
+
+            <p>
+                The <code>source</code> dropdown lets you select which device plays the music.
+                Choose your tablet to route audio there.
+            </p>
+
+            <h3>Step 3.4: Voice Control via HA</h3>
+
+            <p>
+                If you have voice assistants connected to Home Assistant (Alexa, Google Home, or local
+                voice with Whisper), you can control tablet music with voice:
+            </p>
+
+            <ul>
+                <li><em>"Play jazz on the kitchen tablet"</em></li>
+                <li><em>"Pause the music in the office"</em></li>
+                <li><em>"Set kitchen tablet volume to 50%"</em></li>
+            </ul>
+
+            <div class="info-box tip">
+                <h4>✓ Pro Tip</h4>
+                <p>
+                    Create an HA script that starts your favorite playlist on the tablet with a single
+                    button press or voice command. Perfect for morning routines!
+                </p>
+            </div>
+
+            <!-- ==================== OTHER SERVICES ==================== -->
+            <h2>Other Music Services</h2>
+
+            <p>
+                While this guide focuses on Spotify, the same principle works with other music apps:
+            </p>
+
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Service</th>
+                        <th>Remote Control</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Pandora</strong></td>
+                        <td>Limited (Chromecast)</td>
+                        <td>Cast to tablet if it supports Chromecast</td>
+                    </tr>
+                    <tr>
+                        <td><strong>YouTube Music</strong></td>
+                        <td>Chromecast</td>
+                        <td>Works with Google Cast protocol</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Amazon Music</strong></td>
+                        <td>Alexa Multi-Room</td>
+                        <td>Requires Alexa app on tablet</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Apple Music</strong></td>
+                        <td>Limited on Android</td>
+                        <td>No AirPlay; manual control only</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Plex/Plexamp</strong></td>
+                        <td>Plex Companion</td>
+                        <td>Great for local music libraries</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <p>
+                Spotify has the best Spotify Connect ecosystem, which is why it's the recommended
+                choice for this use case.
+            </p>
+
+            <!-- ==================== TROUBLESHOOTING ==================== -->
+            <h2>Troubleshooting</h2>
+
+            <h3>Tablet doesn't appear as a Spotify Connect device</h3>
+            <ul>
+                <li>Ensure both devices are on the same WiFi network</li>
+                <li>Open the Spotify app on the tablet briefly to "wake it up"</li>
+                <li>Check that the tablet's Spotify is signed into the same account</li>
+                <li>Restart the Spotify app on both devices</li>
+            </ul>
+
+            <h3>Music stops playing after a while</h3>
+            <ul>
+                <li>Disable battery optimization for Spotify (see warning above)</li>
+                <li>Keep the tablet plugged in—some tablets kill background apps on battery</li>
+                <li>In Spotify settings, enable "Keep Screen Awake During Playback" if available</li>
+            </ul>
+
+            <h3>Audio quality is poor</h3>
+            <ul>
+                <li>In Spotify settings, set streaming quality to "Very High"</li>
+                <li>Ensure stable WiFi connection</li>
+                <li>Consider connecting external speakers to the tablet for better sound</li>
+            </ul>
+
+            <h3>Can't control volume from phone/HA</h3>
+            <ul>
+                <li>Volume control depends on the device—some tablets require local volume adjustment</li>
+                <li>If using Dashie HA integration, you can control tablet volume via the <code>number.volume</code> entity</li>
+            </ul>
+
+            <!-- ==================== SUMMARY ==================== -->
+            <h2>Summary</h2>
+
+            <p>Setting up music on your Dashie Lite tablet is straightforward:</p>
+
+            <ol>
+                <li><strong>Install Spotify</strong> on the tablet and sign in</li>
+                <li><strong>Exempt from battery optimization</strong> to prevent background killing</li>
+                <li><strong>Use Spotify Connect</strong> from your phone to select the tablet as the playback device</li>
+                <li><strong>Optionally</strong>, add Spotify integration to Home Assistant for dashboard and voice control</li>
+            </ol>
+
+            <p>
+                Your Dashie dashboard stays visible while music plays through the tablet's speakers—the
+                perfect ambient display for any room in your home.
+            </p>
+
+            <div class="info-box tip">
+                <h4>💡 Next Steps</h4>
+                <p>
+                    Check out our <a href="/guides/voice-control-setup">Voice Control Setup Guide</a> to
+                    add voice commands to your Dashie Lite experience, including "Play music on kitchen tablet"!
+                </p>
+            </div>
+        </div>
+    </article>
+
+    <footer class="footer">
+        <p>
+            Need help? <a href="https://github.com/dashieapp/dashie-lite/issues">Open an issue</a> or
+            email <a href="mailto:support@dashieapp.com">support@dashieapp.com</a>
+        </p>
+        <p style="margin-top: 1rem; color: #888;">
+            © 2024 Dashie. All rights reserved.
+        </p>
+    </footer>
+</body>
+</html>
