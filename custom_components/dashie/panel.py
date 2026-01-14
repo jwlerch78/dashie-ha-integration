@@ -261,12 +261,17 @@ PANEL_HTML = """
             handleFiles(e.dataTransfer.files);
         });
 
-        uploadZone.addEventListener('click', () => {
+        uploadZone.addEventListener('click', (e) => {
+            // Don't trigger if clicking on the label (it handles itself)
+            if (e.target.tagName === 'LABEL' || e.target.tagName === 'INPUT') return;
             fileInput.click();
         });
 
-        fileInput.addEventListener('change', () => {
-            handleFiles(fileInput.files);
+        fileInput.addEventListener('change', (e) => {
+            // Prevent double-handling
+            if (fileInput.files.length > 0) {
+                handleFiles(fileInput.files);
+            }
         });
 
         async function handleFiles(files) {
@@ -387,22 +392,32 @@ PANEL_HTML = """
         }
 
         async function uploadImage(file) {
-            const formData = new FormData();
-            formData.append('file', file);
+            return new Promise((resolve, reject) => {
+                const formData = new FormData();
+                formData.append('file', file);
 
-            const response = await fetch('/api/dashie/photos/upload', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'Authorization': 'Bearer ' + getToken()
-                }
+                const xhr = new XMLHttpRequest();
+
+                xhr.addEventListener('load', () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            resolve(JSON.parse(xhr.responseText));
+                        } catch (e) {
+                            reject(new Error('Invalid response'));
+                        }
+                    } else {
+                        reject(new Error('Upload failed: ' + xhr.status));
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    reject(new Error('Upload failed'));
+                });
+
+                xhr.open('POST', '/api/dashie/photos/upload');
+                xhr.setRequestHeader('Authorization', 'Bearer ' + getToken());
+                xhr.send(formData);
             });
-
-            if (!response.ok) {
-                throw new Error('Upload failed: ' + response.status);
-            }
-
-            return await response.json();
         }
 
         async function loadStats() {
