@@ -20,6 +20,8 @@ from .const import (
     API_SET_VOLUME,
 )
 from .coordinator import DashieCoordinator
+from .photo_hub import PhotoHub
+from .photo_api import register_photo_api_views
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +61,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register services (only once, check if already registered)
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_COMMAND):
         await _async_register_services(hass)
+
+    # Initialize Photo Hub (only once)
+    if "photo_hub" not in hass.data[DOMAIN]:
+        photo_hub = PhotoHub(hass)
+        if await photo_hub.async_initialize():
+            hass.data[DOMAIN]["photo_hub"] = photo_hub
+            register_photo_api_views(hass)
+            _LOGGER.info("Photo Hub initialized and API views registered")
+        else:
+            _LOGGER.warning("Failed to initialize Photo Hub")
 
     return True
 
