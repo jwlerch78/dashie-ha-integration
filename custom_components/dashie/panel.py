@@ -279,23 +279,30 @@ PANEL_HTML = """
             let totalImported = 0;
             let errors = [];
 
+            // Check if we have a single ZIP file (use its own progress tracking)
+            const isSingleZip = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip');
+
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                progressText.textContent = `Uploading ${file.name} (${i + 1}/${files.length})...`;
-                progressFill.style.width = `${((i + 0.5) / files.length) * 100}%`;
+
+                // For non-ZIP files or multiple files, show per-file progress
+                if (!isSingleZip) {
+                    progressText.textContent = `Uploading ${file.name} (${i + 1}/${files.length})...`;
+                    progressFill.style.width = `${((i + 0.5) / files.length) * 100}%`;
+                }
 
                 try {
                     if (file.name.toLowerCase().endsWith('.zip')) {
-                        // Upload as ZIP
-                        const result = await uploadZip(file);
-                        totalImported += result.imported || 0;
-                        if (result.errors && result.errors.length > 0) {
-                            errors.push(...result.errors);
+                        // Upload as ZIP - uploadZip handles its own progress
+                        const uploadResult = await uploadZip(file);
+                        totalImported += uploadResult.imported || 0;
+                        if (uploadResult.errors && uploadResult.errors.length > 0) {
+                            errors.push(...uploadResult.errors);
                         }
                     } else {
                         // Upload as single image
-                        const result = await uploadImage(file);
-                        if (result.id) {
+                        const uploadResult = await uploadImage(file);
+                        if (uploadResult.id) {
                             totalImported += 1;
                         } else {
                             errors.push({ file: file.name, error: 'Upload failed' });
@@ -305,7 +312,9 @@ PANEL_HTML = """
                     errors.push({ file: file.name, error: err.message });
                 }
 
-                progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
+                if (!isSingleZip) {
+                    progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
+                }
             }
 
             progressContainer.classList.remove('visible');
@@ -333,22 +342,48 @@ PANEL_HTML = """
         }
 
         async function uploadZip(file) {
-            const formData = new FormData();
-            formData.append('file', file);
+            return new Promise((resolve, reject) => {
+                const formData = new FormData();
+                formData.append('file', file);
 
-            const response = await fetch('/api/dashie/import-zip', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'Authorization': 'Bearer ' + getToken()
-                }
+                const xhr = new XMLHttpRequest();
+
+                // Track upload progress
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percentComplete = Math.round((e.loaded / e.total) * 100);
+                        progressFill.style.width = percentComplete + '%';
+                        const sizeMB = (e.loaded / 1024 / 1024).toFixed(1);
+                        const totalMB = (e.total / 1024 / 1024).toFixed(1);
+                        progressText.textContent = `Uploading ${file.name}: ${sizeMB}MB / ${totalMB}MB (${percentComplete}%)`;
+                    }
+                });
+
+                xhr.upload.addEventListener('load', () => {
+                    progressText.textContent = `Processing ${file.name}... This may take a while for large files.`;
+                    progressFill.style.width = '100%';
+                });
+
+                xhr.addEventListener('load', () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            resolve(JSON.parse(xhr.responseText));
+                        } catch (e) {
+                            reject(new Error('Invalid response'));
+                        }
+                    } else {
+                        reject(new Error('Upload failed: ' + xhr.status));
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    reject(new Error('Upload failed'));
+                });
+
+                xhr.open('POST', '/api/dashie/import-zip');
+                xhr.setRequestHeader('Authorization', 'Bearer ' + getToken());
+                xhr.send(formData);
             });
-
-            if (!response.ok) {
-                throw new Error('Upload failed: ' + response.status);
-            }
-
-            return await response.json();
         }
 
         async function uploadImage(file) {

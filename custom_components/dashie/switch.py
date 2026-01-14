@@ -18,6 +18,7 @@ from .const import (
     API_UNLOCK_KIOSK,
     API_START_SCREENSAVER,
     API_STOP_SCREENSAVER,
+    API_SET_DARK_MODE,
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
@@ -38,6 +39,7 @@ async def async_setup_entry(
         DashieScreenSwitch(coordinator, device_id),
         DashieScreensaverSwitch(coordinator, device_id),
         DashieLockSwitch(coordinator, device_id),
+        DashieDarkModeSwitch(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -134,4 +136,35 @@ class DashieLockSwitch(DashieEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Unlock the kiosk (API password is authentication, PIN not required)."""
         await self.coordinator.send_command(API_UNLOCK_KIOSK)
+        await self.coordinator.async_request_refresh()
+
+
+class DashieDarkModeSwitch(DashieEntity, SwitchEntity):
+    """Dark mode switch."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:theme-light-dark"
+    _attr_translation_key = "dark_mode"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_dark_mode"
+        self._attr_name = "Dark Mode"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if dark mode is enabled."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("isDarkMode", False)
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable dark mode."""
+        await self.coordinator.send_command(API_SET_DARK_MODE, value="true")
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable dark mode."""
+        await self.coordinator.send_command(API_SET_DARK_MODE, value="false")
         await self.coordinator.async_request_refresh()

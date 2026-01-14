@@ -31,6 +31,7 @@ API_TEXT_TO_SPEECH = "textToSpeech"
 API_STOP_TEXT_TO_SPEECH = "stopTextToSpeech"
 API_SET_PIN = "setPin"
 API_CLEAR_PIN = "clearPin"
+API_SET_DARK_MODE = "setDarkMode"
 
 # SSDP
 SSDP_ST = "urn:dashie:service:DashieLite:1"
