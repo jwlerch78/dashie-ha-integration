@@ -5,12 +5,20 @@
         "title": "Dashie Lite Discovered",
         "description": "Do you want to set up **{name}** at `{host}`?"
       },
+      "password": {
+        "title": "Enter Password",
+        "description": "The device at `{host}` requires a password.",
+        "data": {
+          "password": "Password"
+        }
+      },
       "user": {
         "title": "Add Dashie Lite Device",
         "description": "Enter the IP address of your Dashie Lite device.",
         "data": {
           "host": "Host",
-          "port": "Port"
+          "port": "Port",
+          "password": "Password (optional)"
         }
       }
     },
@@ -22,7 +30,8 @@
     },
     "error": {
       "cannot_connect": "Cannot connect to device",
-      "no_device_id": "Could not get device ID"
+      "no_device_id": "Could not get device ID",
+      "invalid_auth": "Invalid password"
     }
   },
   "entity": {

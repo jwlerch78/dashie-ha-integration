@@ -15,6 +15,7 @@ from .const import (
     API_SCREEN_OFF,
     API_LOCK_KIOSK,
     API_UNLOCK_KIOSK,
+    API_STOP_SCREENSAVER,
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
@@ -52,13 +53,19 @@ class DashieScreenSwitch(DashieEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return true if screen is on."""
+        """Return true if screen is on and not in screensaver."""
         if self.coordinator.data:
-            return self.coordinator.data.get("isScreenOn", False)
+            is_screen_on = self.coordinator.data.get("isScreenOn", False)
+            is_in_screensaver = self.coordinator.data.get("isInScreensaver", False)
+            # Screen is considered "on" only if screen is on AND not in screensaver
+            return is_screen_on and not is_in_screensaver
         return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the screen on."""
+        # If in screensaver mode, stop it first, then turn screen on
+        if self.coordinator.data and self.coordinator.data.get("isInScreensaver"):
+            await self.coordinator.send_command(API_STOP_SCREENSAVER)
         await self.coordinator.send_command(API_SCREEN_ON)
         await self.coordinator.async_request_refresh()
 

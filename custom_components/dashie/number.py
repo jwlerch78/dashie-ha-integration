@@ -5,7 +5,6 @@ from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -79,9 +78,8 @@ class DashieVolumeNumber(DashieEntity, NumberEntity):
     """Volume control number entity."""
 
     _attr_native_min_value = 0
-    _attr_native_max_value = 100
-    _attr_native_step = 5
-    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_native_max_value = 10
+    _attr_native_step = 1
     _attr_mode = NumberMode.SLIDER
     _attr_icon = "mdi:volume-high"
     _attr_translation_key = "volume"
@@ -94,28 +92,21 @@ class DashieVolumeNumber(DashieEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the current volume level as percentage."""
+        """Return the current volume level (0-10 scale)."""
         if self.coordinator.data:
-            # audioVolume is typically 0-15 or 0-100 depending on stream
-            # We'll normalize to percentage
-            volume = self.coordinator.data.get("audioVolume")
-            max_volume = self.coordinator.data.get("audioVolumeMax", 15)
-            if volume is not None and max_volume:
-                return round(volume / max_volume * 100)
+            # currentVolume is 0-100, convert to 0-10 scale
+            volume = self.coordinator.data.get("currentVolume")
+            if volume is not None:
+                return round(volume / 10)
         return None
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the volume level."""
-        # Get max volume to properly scale
-        max_volume = 15  # Default Android media volume max
-        if self.coordinator.data:
-            max_volume = self.coordinator.data.get("audioVolumeMax", 15)
-
-        # Convert percentage to device's volume scale
-        volume_value = round(value / 100 * max_volume)
+        # Convert 0-10 to 0-100 for the API
+        api_volume = int(value) * 10
         await self.coordinator.send_command(
             API_SET_VOLUME,
-            level=str(volume_value),
+            level=str(api_volume),
             stream="3"  # STREAM_MUSIC
         )
         await self.coordinator.async_request_refresh()

@@ -7,7 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, CONF_HOST, CONF_PORT
+from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_PASSWORD
 from .coordinator import DashieCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,8 +25,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie Lite from a config entry."""
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
+    password = entry.data.get(CONF_PASSWORD, "")
 
-    coordinator = DashieCoordinator(hass, host, port)
+    coordinator = DashieCoordinator(hass, host, port, password)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})
