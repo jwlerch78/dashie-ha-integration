@@ -11,6 +11,7 @@ from .const import (
     CONF_DEVICE_ID,
     API_LOAD_START_URL,
     API_BRING_TO_FOREGROUND,
+    API_RESTART_APP,
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
@@ -28,6 +29,7 @@ async def async_setup_entry(
     entities = [
         DashieReloadButton(coordinator, device_id),
         DashieForegroundButton(coordinator, device_id),
+        DashieRestartButton(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -65,3 +67,20 @@ class DashieForegroundButton(DashieEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Bring app to foreground."""
         await self.coordinator.send_command(API_BRING_TO_FOREGROUND)
+
+
+class DashieRestartButton(DashieEntity, ButtonEntity):
+    """Restart app button."""
+
+    _attr_icon = "mdi:restart"
+    _attr_translation_key = "restart"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_restart"
+        self._attr_name = "Restart App"
+
+    async def async_press(self) -> None:
+        """Restart the app."""
+        await self.coordinator.send_command(API_RESTART_APP)

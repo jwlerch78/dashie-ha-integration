@@ -15,6 +15,7 @@ from .const import (
     API_SCREEN_OFF,
     API_LOCK_KIOSK,
     API_UNLOCK_KIOSK,
+    API_START_SCREENSAVER,
     API_STOP_SCREENSAVER,
 )
 from .coordinator import DashieCoordinator
@@ -32,6 +33,7 @@ async def async_setup_entry(
 
     entities = [
         DashieScreenSwitch(coordinator, device_id),
+        DashieScreensaverSwitch(coordinator, device_id),
         DashieKioskLockSwitch(coordinator, device_id),
     ]
 
@@ -72,6 +74,37 @@ class DashieScreenSwitch(DashieEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the screen off."""
         await self.coordinator.send_command(API_SCREEN_OFF)
+        await self.coordinator.async_request_refresh()
+
+
+class DashieScreensaverSwitch(DashieEntity, SwitchEntity):
+    """Screensaver switch."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:sleep"
+    _attr_translation_key = "screensaver"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_screensaver"
+        self._attr_name = "Screensaver"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if screensaver is active."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("isInScreensaver", False)
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Start the screensaver."""
+        await self.coordinator.send_command(API_START_SCREENSAVER)
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Stop the screensaver."""
+        await self.coordinator.send_command(API_STOP_SCREENSAVER)
         await self.coordinator.async_request_refresh()
 
 

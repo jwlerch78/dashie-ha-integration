@@ -7,7 +7,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfInformation
+from homeassistant.const import PERCENTAGE, UnitOfInformation, LIGHT_LUX
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -27,8 +27,10 @@ async def async_setup_entry(
 
     entities = [
         DashieBatterySensor(coordinator, device_id),
-        DashieBrightnessSensor(coordinator, device_id),
-        DashieMemorySensor(coordinator, device_id),
+        DashieLightSensor(coordinator, device_id),
+        DashieCurrentPageSensor(coordinator, device_id),
+        DashieWifiSignalSensor(coordinator, device_id),
+        DashieStorageSensor(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -65,62 +67,112 @@ class DashieBatterySensor(DashieEntity, SensorEntity):
         }
 
 
-class DashieBrightnessSensor(DashieEntity, SensorEntity):
-    """Screen brightness sensor."""
+class DashieLightSensor(DashieEntity, SensorEntity):
+    """Ambient light sensor."""
 
-    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = SensorDeviceClass.ILLUMINANCE
+    _attr_native_unit_of_measurement = LIGHT_LUX
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:brightness-6"
-    _attr_translation_key = "brightness"
+    _attr_icon = "mdi:brightness-5"
+    _attr_translation_key = "light"
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{device_id}_brightness"
-        self._attr_name = "Brightness"
+        self._attr_unique_id = f"{device_id}_light"
+        self._attr_name = "Ambient Light"
 
     @property
     def native_value(self) -> int | None:
-        """Return the brightness level as percentage."""
+        """Return the ambient light level in lux."""
         if self.coordinator.data:
-            # screenBrightness is 0-255, convert to percentage
-            brightness = self.coordinator.data.get("screenBrightness")
-            if brightness is not None:
-                return round(brightness / 255 * 100)
+            return self.coordinator.data.get("ambientLight")
         return None
 
 
-class DashieMemorySensor(DashieEntity, SensorEntity):
-    """Memory usage sensor."""
+class DashieCurrentPageSensor(DashieEntity, SensorEntity):
+    """Current page/URL sensor."""
 
-    _attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:memory"
-    _attr_translation_key = "memory"
+    _attr_icon = "mdi:web"
+    _attr_translation_key = "current_page"
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{device_id}_memory"
-        self._attr_name = "Memory Used"
+        self._attr_unique_id = f"{device_id}_current_page"
+        self._attr_name = "Current Page"
 
     @property
-    def native_value(self) -> float | None:
-        """Return memory usage in MB."""
+    def native_value(self) -> str | None:
+        """Return the current page URL."""
         if self.coordinator.data:
-            # Try heap_used_mb first (from telemetry), fallback to calculation
-            heap_used = self.coordinator.data.get("heap_used_mb")
-            if heap_used is not None:
-                return round(heap_used, 1)
+            return self.coordinator.data.get("currentPage")
+        return None
+
+
+class DashieWifiSignalSensor(DashieEntity, SensorEntity):
+    """WiFi signal strength sensor."""
+
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:wifi"
+    _attr_translation_key = "wifi_signal"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_wifi_signal"
+        self._attr_name = "WiFi Signal"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the WiFi signal strength as percentage."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("wifiSignalLevel")
         return None
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return additional memory attributes."""
+        """Return additional WiFi attributes."""
         if not self.coordinator.data:
             return {}
         return {
-            "total_ram_mb": self.coordinator.data.get("total_ram_mb"),
-            "available_ram_mb": self.coordinator.data.get("available_ram_mb"),
-            "low_memory": self.coordinator.data.get("low_memory"),
+            "ssid": self.coordinator.data.get("ssid"),
+            "ip_address": self.coordinator.data.get("ip4"),
+            "mac_address": self.coordinator.data.get("Mac"),
+        }
+
+
+class DashieStorageSensor(DashieEntity, SensorEntity):
+    """Internal storage sensor."""
+
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = UnitOfInformation.GIGABYTES
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:harddisk"
+    _attr_translation_key = "storage"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_storage"
+        self._attr_name = "Storage Free"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the free storage in GB."""
+        if self.coordinator.data:
+            free_bytes = self.coordinator.data.get("internalStorageFreeSpace")
+            if free_bytes is not None:
+                return round(free_bytes / (1024 ** 3), 2)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional storage attributes."""
+        if not self.coordinator.data:
+            return {}
+        total_bytes = self.coordinator.data.get("internalStorageTotalSpace")
+        return {
+            "total_gb": round(total_bytes / (1024 ** 3), 2) if total_bytes else None,
         }

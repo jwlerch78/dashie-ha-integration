@@ -13,10 +13,12 @@ from .coordinator import DashieCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
-    Platform.SENSOR,
-    Platform.SWITCH,
+    Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.NUMBER,
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.TEXT,
     # Platform.CAMERA,  # Enable when RTSP is implemented
 ]
 
