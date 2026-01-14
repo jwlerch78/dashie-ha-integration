@@ -23,7 +23,7 @@ from .const import (
 from .coordinator import DashieCoordinator
 from .photo_hub import PhotoHub
 from .photo_api import register_photo_api_views
-from .panel import register_panel
+from .panel import async_register_panel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         if await photo_hub.async_initialize():
             hass.data[DOMAIN]["photo_hub"] = photo_hub
             register_photo_api_views(hass)
-            register_panel(hass)
+            await async_register_panel(hass)
             _LOGGER.info("Photo Hub initialized (standalone mode)")
         else:
             _LOGGER.warning("Failed to initialize Photo Hub")
@@ -91,7 +91,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if await photo_hub.async_initialize():
             hass.data[DOMAIN]["photo_hub"] = photo_hub
             register_photo_api_views(hass)
-            register_panel(hass)
+            await async_register_panel(hass)
             _LOGGER.info("Photo Hub initialized and API views registered")
         else:
             _LOGGER.warning("Failed to initialize Photo Hub")

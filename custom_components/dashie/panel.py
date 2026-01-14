@@ -493,13 +493,16 @@ class DashiePhotoUploadView(HomeAssistantView):
             )
 
 
-def register_panel(hass: HomeAssistant) -> None:
+async def async_register_panel(hass: HomeAssistant) -> None:
     """Register the Dashie Photo Hub panel."""
     hass.http.register_view(DashiePanelView())
     hass.http.register_view(DashiePhotoUploadView())
 
-    # Register as a panel in HA sidebar
-    hass.components.frontend.async_register_built_in_panel(
+    # Register as a panel in HA sidebar using the frontend integration
+    from homeassistant.components.frontend import async_register_built_in_panel
+
+    async_register_built_in_panel(
+        hass,
         component_name="iframe",
         sidebar_title="Dashie Photos",
         sidebar_icon="mdi:image-multiple",
