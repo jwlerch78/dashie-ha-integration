@@ -429,7 +429,7 @@ class DashiePanelView(HomeAssistantView):
 
     url = "/dashie-photos"
     name = "dashie:panel"
-    requires_auth = True
+    requires_auth = False  # Panel HTML served without auth; API calls use auth
 
     async def get(self, request: web.Request) -> web.Response:
         """Serve the panel HTML."""
