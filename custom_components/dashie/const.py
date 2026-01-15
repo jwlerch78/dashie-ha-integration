@@ -13,7 +13,7 @@ CONF_MEDIA_FOLDER = "media_folder"
 # Defaults
 DEFAULT_PORT = 2323
 DEFAULT_SCAN_INTERVAL = 15
-DEFAULT_MEDIA_FOLDER = "dashie-photos"
+DEFAULT_MEDIA_FOLDER = "."  # Root of /config/media folder
 
 # API endpoints (Fully Kiosk compatible)
 API_DEVICE_INFO = "deviceInfo"

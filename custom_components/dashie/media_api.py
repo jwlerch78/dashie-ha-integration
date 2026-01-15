@@ -35,14 +35,18 @@ class DashieMediaListView(HomeAssistantView):
         """
         hass: HomeAssistant = request.app["hass"]
 
-        # Get folder from query params (default to dashie-photos)
-        folder = request.query.get("folder", "dashie-photos")
+        # Get folder from query params (default to "." for root media folder)
+        folder = request.query.get("folder", ".")
         limit = int(request.query.get("limit", 100))
         offset = int(request.query.get("offset", 0))
         random_order = request.query.get("random", "false").lower() == "true"
 
-        # Build path to media folder
-        media_dir = Path(hass.config.path("media")) / folder
+        # Build path to media folder ("." means root media folder)
+        media_base = Path(hass.config.path("media"))
+        if folder == ".":
+            media_dir = media_base
+        else:
+            media_dir = media_base / folder
 
         if not media_dir.exists():
             return web.json_response({
@@ -90,9 +94,12 @@ class DashieMediaImageView(HomeAssistantView):
         """Serve an image file from the media folder."""
         hass: HomeAssistant = request.app["hass"]
 
-        # Build path and validate
+        # Build path and validate ("." means root media folder)
         media_dir = Path(hass.config.path("media"))
-        file_path = media_dir / folder / filename
+        if folder == ".":
+            file_path = media_dir / filename
+        else:
+            file_path = media_dir / folder / filename
 
         # Security: ensure path is within media directory
         try:

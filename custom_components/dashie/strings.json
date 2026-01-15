@@ -8,7 +8,7 @@
           "media_folder": "Media Folder"
         },
         "data_description": {
-          "media_folder": "Folder name within /config/media/ containing photos (e.g., 'dashie-photos', 'family-photos')"
+          "media_folder": "Use '.' for root media folder, or specify a subfolder name (e.g., 'family-photos')"
         }
       }
     }
