@@ -1,4 +1,18 @@
 {
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dashie Options",
+        "description": "Configure screensaver photos for **{device_name}**.\n\nUpload photos to Home Assistant via **Media > Local Media > Manage**, then specify the folder name below.",
+        "data": {
+          "media_folder": "Media Folder"
+        },
+        "data_description": {
+          "media_folder": "Folder name within /config/media/ containing photos (e.g., 'dashie-photos', 'family-photos')"
+        }
+      }
+    }
+  },
   "config": {
     "step": {
       "confirm": {
@@ -55,6 +69,9 @@
       },
       "lock": {
         "name": "Lock"
+      },
+      "dark_mode": {
+        "name": "Dark Mode"
       }
     },
     "binary_sensor": {

@@ -8,10 +8,12 @@ CONF_PORT = "port"
 CONF_PASSWORD = "password"
 CONF_DEVICE_ID = "device_id"
 CONF_DEVICE_NAME = "device_name"
+CONF_MEDIA_FOLDER = "media_folder"
 
 # Defaults
 DEFAULT_PORT = 2323
 DEFAULT_SCAN_INTERVAL = 15
+DEFAULT_MEDIA_FOLDER = "dashie-photos"
 
 # API endpoints (Fully Kiosk compatible)
 API_DEVICE_INFO = "deviceInfo"

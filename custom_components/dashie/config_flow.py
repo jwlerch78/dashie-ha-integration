@@ -13,7 +13,14 @@ from homeassistant.components import ssdp
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_PASSWORD
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, DEFAULT_PORT, CONF_DEVICE_ID, CONF_DEVICE_NAME
+from .const import (
+    DOMAIN,
+    DEFAULT_PORT,
+    DEFAULT_MEDIA_FOLDER,
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    CONF_MEDIA_FOLDER,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -247,3 +254,47 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     raise Exception(data.get("message", "Unknown error"))
 
                 return data
+
+    @staticmethod
+    @config_entries.HANDLERS.register(DOMAIN)
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return DashieOptionsFlow(config_entry)
+
+
+class DashieOptionsFlow(config_entries.OptionsFlow):
+    """Handle Dashie options."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        # Get current media folder from options or default
+        current_folder = self.config_entry.options.get(
+            CONF_MEDIA_FOLDER,
+            DEFAULT_MEDIA_FOLDER
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_MEDIA_FOLDER,
+                        default=current_folder
+                    ): str,
+                }
+            ),
+            description_placeholders={
+                "device_name": self.config_entry.data.get(CONF_DEVICE_NAME, "Dashie"),
+            },
+        )

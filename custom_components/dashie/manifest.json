@@ -7,7 +7,7 @@
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/dashieapp/dashie-ha-integration/issues",
-  "requirements": ["aiohttp>=3.8.0", "aiofiles>=23.0.0", "Pillow>=10.0.0"],
+  "requirements": ["aiohttp>=3.8.0"],
   "ssdp": [
     {
       "st": "urn:dashie:service:DashieLite:1"

@@ -21,9 +21,7 @@ from .const import (
     API_SET_VOLUME,
 )
 from .coordinator import DashieCoordinator
-from .photo_hub import PhotoHub
-from .photo_api import register_photo_api_views
-from .panel import async_register_panel
+from .media_api import register_media_api_views
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,30 +43,22 @@ SERVICE_SET_BRIGHTNESS = "set_brightness"
 SERVICE_SET_VOLUME = "set_volume"
 SERVICE_SHOW_MESSAGE = "show_message"
 
-# Allow loading without config entry (for Photo Hub standalone)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# Track if media API is registered (only register once)
+_media_api_registered = False
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the Dashie integration (runs even without config entries)."""
+    """Set up the Dashie integration."""
     hass.data.setdefault(DOMAIN, {})
-
-    # Initialize Photo Hub on integration load (works without devices)
-    if "photo_hub" not in hass.data[DOMAIN]:
-        photo_hub = PhotoHub(hass)
-        if await photo_hub.async_initialize():
-            hass.data[DOMAIN]["photo_hub"] = photo_hub
-            register_photo_api_views(hass)
-            await async_register_panel(hass)
-            _LOGGER.info("Photo Hub initialized (standalone mode)")
-        else:
-            _LOGGER.warning("Failed to initialize Photo Hub")
-
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie Lite from a config entry."""
+    global _media_api_registered
+
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
     password = entry.data.get(CONF_PASSWORD, "")
@@ -81,34 +71,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Register services (only once, check if already registered)
+    # Register services (only once)
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_COMMAND):
         await _async_register_services(hass)
 
-    # Initialize Photo Hub (only once)
-    if "photo_hub" not in hass.data[DOMAIN]:
-        photo_hub = PhotoHub(hass)
-        if await photo_hub.async_initialize():
-            hass.data[DOMAIN]["photo_hub"] = photo_hub
-            register_photo_api_views(hass)
-            await async_register_panel(hass)
-            _LOGGER.info("Photo Hub initialized and API views registered")
-        else:
-            _LOGGER.warning("Failed to initialize Photo Hub")
+    # Register Media API views (only once)
+    if not _media_api_registered:
+        register_media_api_views(hass)
+        _media_api_registered = True
+        _LOGGER.info("Registered Dashie Media API views")
+
+    # Listen for options updates
+    entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
     return True
+
+
+async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options update."""
+    # Options changed - coordinator will pick up new media_folder on next call
+    _LOGGER.debug("Options updated for %s: %s", entry.entry_id, entry.options)
 
 
 async def _async_register_services(hass: HomeAssistant) -> None:
     """Register Dashie services."""
 
-    def _get_coordinator(entry_id: str) -> DashieCoordinator | None:
-        """Get coordinator by entry ID."""
-        return hass.data[DOMAIN].get(entry_id)
-
     def _get_all_coordinators() -> list[DashieCoordinator]:
-        """Get all coordinators."""
-        return list(hass.data[DOMAIN].values())
+        """Get all coordinators (filter out non-coordinator items)."""
+        return [
+            v for v in hass.data[DOMAIN].values()
+            if isinstance(v, DashieCoordinator)
+        ]
 
     async def async_send_command(call: ServiceCall) -> None:
         """Send a command to a device."""
@@ -188,7 +181,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     # Unregister services if no more entries
-    if not hass.data[DOMAIN]:
+    remaining_coordinators = [
+        v for v in hass.data[DOMAIN].values()
+        if isinstance(v, DashieCoordinator)
+    ]
+    if not remaining_coordinators:
         hass.services.async_remove(DOMAIN, SERVICE_SEND_COMMAND)
         hass.services.async_remove(DOMAIN, SERVICE_LOAD_URL)
         hass.services.async_remove(DOMAIN, SERVICE_SPEAK)
