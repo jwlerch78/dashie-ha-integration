@@ -85,8 +85,8 @@ class DashieScreensaverSensor(DashieEntity, BinarySensorEntity):
 class DashiePinSetSensor(DashieEntity, BinarySensorEntity):
     """PIN set binary sensor."""
 
-    _attr_device_class = BinarySensorDeviceClass.LOCK
-    _attr_icon = "mdi:form-textbox-password"
+    # Don't use LOCK device class - it shows "Unlocked" when is_on=True which is confusing
+    # We want: PIN set (True) = "Set", PIN not set (False) = "Not Set"
     _attr_translation_key = "pin_set"
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
@@ -101,3 +101,10 @@ class DashiePinSetSensor(DashieEntity, BinarySensorEntity):
         if self.coordinator.data:
             return self.coordinator.data.get("hasPinSet", False)
         return None
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on PIN state."""
+        if self.is_on:
+            return "mdi:lock-check"
+        return "mdi:lock-open-outline"

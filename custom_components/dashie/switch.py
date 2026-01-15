@@ -39,8 +39,10 @@ async def async_setup_entry(
         DashieScreenSwitch(coordinator, device_id),
         DashieScreensaverSwitch(coordinator, device_id),
         DashieLockSwitch(coordinator, device_id),
-        DashieDarkModeSwitch(coordinator, device_id),
     ]
+
+    # Dark mode switch (may be unavailable on Fire Tablets)
+    entities.append(DashieDarkModeSwitch(coordinator, device_id))
 
     async_add_entities(entities)
 
@@ -151,6 +153,22 @@ class DashieDarkModeSwitch(DashieEntity, SwitchEntity):
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_dark_mode"
         self._attr_name = "Dark Mode"
+
+    @property
+    def available(self) -> bool:
+        """Return True if dark mode is supported on this device."""
+        # First check parent availability (coordinator connected)
+        if not super().available:
+            _LOGGER.info("Dark mode: parent not available")
+            return False
+        if not self.coordinator.data:
+            _LOGGER.info("Dark mode: no coordinator data")
+            return False
+        # Fire Tablets don't support dark mode (requires WRITE_SECURE_SETTINGS)
+        supported = self.coordinator.data.get("supportsDarkMode", True)
+        _LOGGER.info("Dark mode available check: supportsDarkMode=%s, data keys=%s",
+                     supported, list(self.coordinator.data.keys())[:10])
+        return supported
 
     @property
     def is_on(self) -> bool | None:

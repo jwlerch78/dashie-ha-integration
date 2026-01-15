@@ -94,14 +94,20 @@ class DashiePinText(DashieEntity, TextEntity):
             _LOGGER.info("Clearing PIN (masked value submitted)")
             self.coordinator.set_stored_pin("")  # Clear stored PIN
             await self.coordinator.send_command(API_CLEAR_PIN)
+            # Optimistically update local state for immediate UI feedback
+            self.coordinator.update_local_data(hasPinSet=False)
         elif value and len(value) == 4 and value.isdigit():
             # Set the PIN to a new 4-digit value
             _LOGGER.info("Setting new PIN")
             self.coordinator.set_stored_pin(value)  # Store PIN for unlocking
             await self.coordinator.send_command(API_SET_PIN, pin=value)
+            # Optimistically update local state for immediate UI feedback
+            self.coordinator.update_local_data(hasPinSet=True)
         else:
             # Clear the PIN (empty or invalid = clear)
             _LOGGER.info("Clearing PIN (value: '%s')", value)
             self.coordinator.set_stored_pin("")  # Clear stored PIN
             await self.coordinator.send_command(API_CLEAR_PIN)
+            # Optimistically update local state for immediate UI feedback
+            self.coordinator.update_local_data(hasPinSet=False)
         await self.coordinator.async_request_refresh()

@@ -59,10 +59,10 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="already_configured")
 
         # Get device name and HA URL from SSDP headers
-        device_name = discovery_info.upnp.get("X-DASHIE-NAME", "Dashie Lite")
+        device_name = discovery_info.upnp.get("X-DASHIE-NAME", "Dashie Tablet")
         configured_ha_url = discovery_info.upnp.get("X-DASHIE-HA-URL")
 
-        # Extract UUID from USN header (format: uuid:xxx::urn:dashie:service:DashieLite:1)
+        # Extract UUID from USN header (format: uuid:xxx::urn:dashie:service:DashieLite:1 or Dashie:1)
         usn = discovery_info.ssdp_usn or ""
         ssdp_uuid = None
         if usn.startswith("uuid:"):

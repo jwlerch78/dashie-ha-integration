@@ -44,6 +44,18 @@ class DashieCoordinator(DataUpdateCoordinator):
         self._stored_pin = pin
         _LOGGER.debug("Stored PIN updated")
 
+    def update_local_data(self, **kwargs) -> None:
+        """Optimistically update local data cache for immediate UI feedback.
+
+        This allows entities to update the coordinator's data immediately
+        after sending a command, rather than waiting for the next poll.
+        The next poll will overwrite with the actual device state.
+        """
+        if self.data:
+            self.data.update(kwargs)
+            # Notify listeners that data has changed
+            self.async_set_updated_data(self.data)
+
     async def _async_update_data(self) -> dict:
         """Fetch data from Dashie Lite device."""
         try:

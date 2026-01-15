@@ -1,6 +1,6 @@
 {
   "domain": "dashie",
-  "name": "Dashie Lite",
+  "name": "Dashie",
   "codeowners": ["@jwlerch78"],
   "config_flow": true,
   "documentation": "https://github.com/jwlerch78/dashie-ha-integration",
@@ -11,6 +11,9 @@
   "ssdp": [
     {
       "st": "urn:dashie:service:DashieLite:1"
+    },
+    {
+      "st": "urn:dashie:service:Dashie:1"
     }
   ],
   "version": "1.0.0-beta.1"
