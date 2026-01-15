@@ -96,6 +96,54 @@ data:
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup instructions.
 
+### Deploying Updates to Home Assistant
+
+We use Samba to deploy the integration files from this repo to Home Assistant.
+
+#### Prerequisites
+
+1. **Samba add-on** must be installed and running in Home Assistant
+   - Go to Settings → Add-ons → Add-on Store
+   - Search for "Samba share" and install
+   - Configure username/password and start the add-on
+
+2. **Home Assistant IP**: `192.168.86.46`
+
+#### Connecting via Samba (macOS)
+
+1. Open **Finder**
+2. Press **Cmd+K** (or Go → Connect to Server)
+3. Enter: `smb://192.168.86.46/config`
+4. Enter your Samba credentials when prompted
+5. The HA config folder will mount at `/Volumes/config`
+
+#### Copying Files
+
+Once connected, run this command to update the integration:
+
+```bash
+# Copy all integration files to Home Assistant
+cd /Users/johnlerch/projects/dashie-ha-integration/custom_components/dashie
+find . -type f -exec cp {} /Volumes/config/custom_components/dashie/ \;
+```
+
+Or to do a clean install (removes old files first):
+
+```bash
+# Remove existing installation
+rm -rf /Volumes/config/custom_components/dashie/*
+
+# Copy fresh files
+cd /Users/johnlerch/projects/dashie-ha-integration/custom_components/dashie
+find . -type f -exec cp {} /Volumes/config/custom_components/dashie/ \;
+```
+
+#### After Deployment
+
+**Restart Home Assistant** to load the updated integration:
+- Go to Settings → System → Restart
+- Or use Developer Tools → Services → `homeassistant.restart`
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
