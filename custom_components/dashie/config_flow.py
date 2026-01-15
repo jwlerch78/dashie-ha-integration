@@ -1,4 +1,4 @@
-"""Config flow for Dashie Lite integration."""
+"""Config flow for Dashie integration."""
 from __future__ import annotations
 
 import logging
@@ -26,7 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Dashie Lite."""
+    """Handle a config flow for Dashie."""
 
     VERSION = 1
 
@@ -59,7 +59,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="already_configured")
 
         # Get device name and HA URL from SSDP headers
-        device_name = discovery_info.upnp.get("X-DASHIE-NAME", "Dashie Tablet")
+        device_name = discovery_info.upnp.get("X-DASHIE-NAME", "Dashie")
         configured_ha_url = discovery_info.upnp.get("X-DASHIE-HA-URL")
 
         # Extract UUID from USN header (format: uuid:xxx::urn:dashie:service:DashieLite:1 or Dashie:1)
@@ -123,7 +123,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._abort_if_unique_id_configured()
 
                     return self.async_create_entry(
-                        title=self._device_info.get("deviceName", "Dashie Lite"),
+                        title=self._device_info.get("deviceName", "Dashie"),
                         data={
                             CONF_HOST: self._host,
                             CONF_PORT: self._port,
@@ -161,7 +161,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Confirm the discovered device."""
         if user_input is not None:
             return self.async_create_entry(
-                title=self._device_info.get("deviceName", "Dashie Lite"),
+                title=self._device_info.get("deviceName", "Dashie"),
                 data={
                     CONF_HOST: self._host,
                     CONF_PORT: self._port,
@@ -171,7 +171,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
-        device_name = self._device_info.get("deviceName", "Dashie Lite")
+        device_name = self._device_info.get("deviceName", "Dashie")
         return self.async_show_form(
             step_id="confirm",
             description_placeholders={
@@ -200,7 +200,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._abort_if_unique_id_configured()
 
                     return self.async_create_entry(
-                        title=self._device_info.get("deviceName", "Dashie Lite"),
+                        title=self._device_info.get("deviceName", "Dashie"),
                         data={
                             CONF_HOST: self._host,
                             CONF_PORT: self._port,
