@@ -135,3 +135,70 @@ show_message:
           max: 30000
           step: 1000
           unit_of_measurement: "ms"
+
+# Timer services
+start_timer:
+  name: Start Timer
+  description: Start a Home Assistant timer and show it on Dashie devices
+  fields:
+    timer_entity:
+      name: Timer Entity
+      description: The timer helper entity to start (e.g., timer.kitchen)
+      required: true
+      selector:
+        entity:
+          domain: timer
+    duration:
+      name: Duration
+      description: Timer duration (e.g., "5:00" for 5 minutes, "1:30:00" for 1.5 hours, or seconds as number)
+      required: false
+      selector:
+        text:
+    label:
+      name: Label
+      description: Custom label for the timer (optional, defaults to timer name + duration)
+      required: false
+      selector:
+        text:
+
+pause_timer:
+  name: Pause/Resume Timer
+  description: Pause a running timer or resume a paused timer
+  fields:
+    timer_entity:
+      name: Timer Entity
+      description: The timer helper entity to pause/resume
+      required: true
+      selector:
+        entity:
+          domain: timer
+
+cancel_timer:
+  name: Cancel Timer
+  description: Cancel a timer and hide it from Dashie devices
+  fields:
+    timer_entity:
+      name: Timer Entity
+      description: The timer helper entity to cancel
+      required: true
+      selector:
+        entity:
+          domain: timer
+
+show_timer:
+  name: Show Timer
+  description: Display an existing running timer on Dashie devices (for timers started elsewhere)
+  fields:
+    timer_entity:
+      name: Timer Entity
+      description: The timer helper entity to display
+      required: true
+      selector:
+        entity:
+          domain: timer
+    label:
+      name: Label
+      description: Custom label for the timer display (optional)
+      required: false
+      selector:
+        text:
