@@ -98,25 +98,45 @@ class DashieMediaListView(HomeAssistantView):
         offset = int(request.query.get("offset", 0))
         random_order = request.query.get("random", "false").lower() == "true"
 
-        # Build path to media folder ("." means root media folder)
+        # Build path to media folder ("." means root, "*" means all folders)
         media_base = _get_media_base_path(hass)
-        if folder == ".":
+
+        if folder == "*":
+            # Scan ALL folders recursively
+            if not media_base.exists():
+                return web.json_response({
+                    "photos": [],
+                    "total": 0,
+                    "folder": folder,
+                    "message": "Media directory not found."
+                })
+            photos = await hass.async_add_executor_job(
+                _scan_all_folders, media_base
+            )
+        elif folder == ".":
             media_dir = media_base
+            if not media_dir.exists():
+                return web.json_response({
+                    "photos": [],
+                    "total": 0,
+                    "folder": folder,
+                    "message": f"Folder '{folder}' not found in /config/media. Create it via Media > Local Media > Manage."
+                })
+            photos = await hass.async_add_executor_job(
+                _scan_media_folder, media_dir, folder
+            )
         else:
             media_dir = media_base / folder
-
-        if not media_dir.exists():
-            return web.json_response({
-                "photos": [],
-                "total": 0,
-                "folder": folder,
-                "message": f"Folder '{folder}' not found in /config/media. Create it via Media > Local Media > Manage."
-            })
-
-        # Get all image files
-        photos = await hass.async_add_executor_job(
-            _scan_media_folder, media_dir, folder
-        )
+            if not media_dir.exists():
+                return web.json_response({
+                    "photos": [],
+                    "total": 0,
+                    "folder": folder,
+                    "message": f"Folder '{folder}' not found in /config/media. Create it via Media > Local Media > Manage."
+                })
+            photos = await hass.async_add_executor_job(
+                _scan_media_folder, media_dir, folder
+            )
 
         total = len(photos)
 
@@ -233,9 +253,57 @@ def _scan_media_folder(media_dir: Path, folder_name: str) -> list[dict]:
     return photos
 
 
+def _scan_all_folders(media_base: Path) -> list[dict]:
+    """Scan ALL folders in media directory for images (runs in executor).
+
+    Returns photos from all folders, with URLs that include the folder path.
+    """
+    photos = []
+
+    def scan_folder_recursive(directory: Path, folder_name: str, prefix: str = ""):
+        """Recursively scan a folder for images."""
+        try:
+            for item in directory.iterdir():
+                if item.is_file():
+                    ext = item.suffix.lower()
+                    if ext in SUPPORTED_EXTENSIONS:
+                        relative_path = f"{prefix}{item.name}" if not prefix else f"{prefix}/{item.name}"
+                        photos.append({
+                            "filename": item.name,
+                            "path": f"{folder_name}/{relative_path}" if folder_name != "." else relative_path,
+                            "url": f"/api/dashie/media/image/{folder_name}/{relative_path}",
+                            "size": item.stat().st_size,
+                            "modified": item.stat().st_mtime,
+                        })
+                elif item.is_dir() and not item.name.startswith("."):
+                    new_prefix = f"{prefix}/{item.name}" if prefix else item.name
+                    scan_folder_recursive(item, folder_name, new_prefix)
+        except PermissionError:
+            _LOGGER.warning("Permission denied scanning %s", directory)
+
+    # Scan root folder
+    for item in media_base.iterdir():
+        if item.is_file():
+            ext = item.suffix.lower()
+            if ext in SUPPORTED_EXTENSIONS:
+                photos.append({
+                    "filename": item.name,
+                    "path": item.name,
+                    "url": f"/api/dashie/media/image/./{item.name}",
+                    "size": item.stat().st_size,
+                    "modified": item.stat().st_mtime,
+                })
+        elif item.is_dir() and not item.name.startswith("."):
+            # Scan each subdirectory
+            scan_folder_recursive(item, item.name)
+
+    return photos
+
+
 def _list_media_folders(media_dir: Path) -> list[dict]:
     """List folders in media directory with image counts (runs in executor)."""
     folders = []
+    total_count = 0
 
     # Check root media folder for images
     root_count = sum(1 for f in media_dir.iterdir()
@@ -246,6 +314,7 @@ def _list_media_folders(media_dir: Path) -> list[dict]:
             "path": ".",
             "photo_count": root_count,
         })
+        total_count += root_count
 
     # Check subdirectories
     for item in media_dir.iterdir():
@@ -257,6 +326,15 @@ def _list_media_folders(media_dir: Path) -> list[dict]:
                     "path": item.name,
                     "photo_count": count,
                 })
+                total_count += count
+
+    # Add "All" option at the beginning if there are multiple folders with photos
+    if len(folders) > 1 or (len(folders) == 1 and folders[0]["path"] != "."):
+        folders.insert(0, {
+            "name": "*",
+            "path": "*",
+            "photo_count": total_count,
+        })
 
     return folders
 

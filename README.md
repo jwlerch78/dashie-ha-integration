@@ -16,7 +16,7 @@ A Home Assistant custom integration for [Dashie Lite](https://www.dashieapp.com/
 
 1. Open HACS in your Home Assistant
 2. Click the three dots in the top right → Custom repositories
-3. Add `https://github.com/dashieapp/dashie-ha-integration` with category "Integration"
+3. Add `https://github.com/jwlerch78/dashie-ha-integration` with category "Integration"
 4. Search for "Dashie Lite" and install
 5. Restart Home Assistant
 

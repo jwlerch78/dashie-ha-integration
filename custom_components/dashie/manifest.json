@@ -1,17 +1,17 @@
 {
   "domain": "dashie",
-  "name": "Dashie",
-  "codeowners": ["@dashieapp"],
+  "name": "Dashie Lite",
+  "codeowners": ["@jwlerch78"],
   "config_flow": true,
-  "documentation": "https://github.com/dashieapp/dashie-ha-integration",
+  "documentation": "https://github.com/jwlerch78/dashie-ha-integration",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/dashieapp/dashie-ha-integration/issues",
+  "issue_tracker": "https://github.com/jwlerch78/dashie-ha-integration/issues",
   "requirements": ["aiohttp>=3.8.0"],
   "ssdp": [
     {
       "st": "urn:dashie:service:DashieLite:1"
     }
   ],
-  "version": "0.1.0"
+  "version": "1.0.0-beta.1"
 }

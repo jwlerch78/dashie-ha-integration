@@ -36,6 +36,11 @@ API_STOP_TEXT_TO_SPEECH = "stopTextToSpeech"
 API_SET_PIN = "setPin"
 API_CLEAR_PIN = "clearPin"
 API_SET_DARK_MODE = "setDarkMode"
+API_SET_SCREENSAVER_MODE = "setScreensaverMode"
+API_SET_HA_MEDIA_FOLDER = "setHaMediaFolder"
+
+# Screensaver modes
+SCREENSAVER_MODES = ["dim", "black", "url", "photos", "app"]
 
 # SSDP
 SSDP_ST = "urn:dashie:service:DashieLite:1"
