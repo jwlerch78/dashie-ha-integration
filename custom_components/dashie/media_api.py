@@ -1,7 +1,14 @@
-"""Media API for Dashie - serves photos from HA's built-in media folder."""
+"""Media API for Dashie - serves photos from HA's media folder.
+
+Supports configurable media base path via:
+1. DASHIE_MEDIA_PATH environment variable
+2. media_base_path in integration options
+3. Default: hass.config.path("media") = /config/media
+"""
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from aiohttp import web
@@ -9,12 +16,62 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_MEDIA_BASE_PATH, DEFAULT_MEDIA_BASE_PATH
 
 _LOGGER = logging.getLogger(__name__)
 
 # Supported image formats
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
+
+
+def _get_media_base_path(hass: HomeAssistant) -> Path:
+    """Get the media base directory path.
+
+    In Home Assistant OS/Supervisor, the Media Browser sidebar uses /media
+    which is separate from /config/media.
+
+    Priority:
+    1. DASHIE_MEDIA_PATH environment variable
+    2. media_base_path from integration domain data
+    3. /media (HA Media Browser location - the sidebar "Media" option)
+    4. Default: hass.config.path("media") = /config/media
+    """
+    # Check environment variable first
+    env_path = os.environ.get("DASHIE_MEDIA_PATH")
+    if env_path:
+        _LOGGER.info("Using DASHIE_MEDIA_PATH: %s", env_path)
+        return Path(env_path)
+
+    # Check integration domain data for configured path
+    domain_data = hass.data.get(DOMAIN, {})
+    configured_path = domain_data.get(CONF_MEDIA_BASE_PATH, DEFAULT_MEDIA_BASE_PATH)
+    if configured_path:
+        _LOGGER.info("Using configured media_base_path: %s", configured_path)
+        return Path(configured_path)
+
+    # Check for /media mount (HA Media Browser - sidebar "Media" option)
+    # This is separate from /config/media and is where media shares appear
+    external_media = Path("/media")
+    config_media = Path(hass.config.path("media"))
+
+    _LOGGER.info("Checking media paths: /media exists=%s, /config/media exists=%s",
+                 external_media.exists(), config_media.exists())
+
+    # Prefer /media (Media Browser) if it exists and has content
+    if external_media.exists() and external_media.is_dir():
+        # Check if it has any subdirectories (actual media folders)
+        try:
+            subdirs = [d for d in external_media.iterdir() if d.is_dir() and not d.name.startswith('.')]
+            if subdirs:
+                _LOGGER.info("Using /media (Media Browser) with %d folders: %s",
+                            len(subdirs), [d.name for d in subdirs[:5]])
+                return external_media
+        except PermissionError:
+            _LOGGER.warning("Permission denied accessing /media")
+
+    # Fall back to /config/media
+    _LOGGER.info("Using /config/media (default)")
+    return config_media
 
 
 class DashieMediaListView(HomeAssistantView):
@@ -42,7 +99,7 @@ class DashieMediaListView(HomeAssistantView):
         random_order = request.query.get("random", "false").lower() == "true"
 
         # Build path to media folder ("." means root media folder)
-        media_base = Path(hass.config.path("media"))
+        media_base = _get_media_base_path(hass)
         if folder == ".":
             media_dir = media_base
         else:
@@ -95,7 +152,7 @@ class DashieMediaImageView(HomeAssistantView):
         hass: HomeAssistant = request.app["hass"]
 
         # Build path and validate ("." means root media folder)
-        media_dir = Path(hass.config.path("media"))
+        media_dir = _get_media_base_path(hass)
         if folder == ".":
             file_path = media_dir / filename
         else:
@@ -130,10 +187,10 @@ class DashieMediaFoldersView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
-        """List folders in /config/media that contain images."""
+        """List folders in the media directory that contain images."""
         hass: HomeAssistant = request.app["hass"]
 
-        media_dir = Path(hass.config.path("media"))
+        media_dir = _get_media_base_path(hass)
 
         if not media_dir.exists():
             return web.json_response({

@@ -136,69 +136,64 @@ show_message:
           step: 1000
           unit_of_measurement: "ms"
 
-# Timer services
+# Timer services (internal timer management - no HA timer helpers required)
+# Supports up to 3 concurrent timers with automatic slot assignment
+
 start_timer:
   name: Start Timer
-  description: Start a Home Assistant timer and show it on Dashie devices
+  description: Start a timer and show it on all Dashie devices (up to 3 concurrent timers)
   fields:
-    timer_entity:
-      name: Timer Entity
-      description: The timer helper entity to start (e.g., timer.kitchen)
-      required: true
-      selector:
-        entity:
-          domain: timer
     duration:
       name: Duration
-      description: Timer duration (e.g., "5:00" for 5 minutes, "1:30:00" for 1.5 hours, or seconds as number)
-      required: false
+      description: Timer duration (e.g., "5:00" for 5 minutes, "1:30:00" for 1.5 hours, "5 minutes", or seconds as number)
+      required: true
+      example: "5:00"
       selector:
         text:
     label:
       name: Label
-      description: Custom label for the timer (optional, defaults to timer name + duration)
+      description: Custom label for the timer (optional, defaults to "Timer N (duration)")
       required: false
+      example: "Pizza"
       selector:
         text:
 
 pause_timer:
   name: Pause/Resume Timer
-  description: Pause a running timer or resume a paused timer
+  description: Pause a running timer or resume a paused timer. If only one timer is active, it will be toggled automatically.
   fields:
-    timer_entity:
-      name: Timer Entity
-      description: The timer helper entity to pause/resume
-      required: true
+    slot:
+      name: Slot
+      description: Timer slot (1-3). Optional if only one timer is running.
+      required: false
       selector:
-        entity:
-          domain: timer
+        number:
+          min: 1
+          max: 3
+          mode: box
+    timer_id:
+      name: Timer ID
+      description: Specific timer ID (alternative to slot). Optional if only one timer is running.
+      required: false
+      selector:
+        text:
 
 cancel_timer:
   name: Cancel Timer
-  description: Cancel a timer and hide it from Dashie devices
+  description: Cancel a timer and hide it from Dashie devices. If only one timer is active, it will be cancelled automatically.
   fields:
-    timer_entity:
-      name: Timer Entity
-      description: The timer helper entity to cancel
-      required: true
+    slot:
+      name: Slot
+      description: Timer slot (1-3). Optional if only one timer is running.
+      required: false
       selector:
-        entity:
-          domain: timer
-
-show_timer:
-  name: Show Timer
-  description: Display an existing running timer on Dashie devices (for timers started elsewhere)
-  fields:
-    timer_entity:
-      name: Timer Entity
-      description: The timer helper entity to display
-      required: true
-      selector:
-        entity:
-          domain: timer
-    label:
-      name: Label
-      description: Custom label for the timer display (optional)
+        number:
+          min: 1
+          max: 3
+          mode: box
+    timer_id:
+      name: Timer ID
+      description: Specific timer ID (alternative to slot). Optional if only one timer is running.
       required: false
       selector:
         text:
