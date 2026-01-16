@@ -56,7 +56,15 @@ class DashieCamera(DashieEntity, Camera):
     def is_on(self) -> bool:
         """Return true if camera is streaming."""
         if self.coordinator.data:
-            # Check RTSP status from device info or last known state
+            # Check RTSP status from coordinator data (polled every 15s)
+            rtsp_status = self.coordinator.data.get("rtsp_status", {})
+            if rtsp_status.get("isStreaming"):
+                # Update cached stream URL if available
+                if rtsp_status.get("streamUrl"):
+                    self._stream_url = rtsp_status["streamUrl"]
+                self._attr_is_streaming = True
+                return True
+            # Fall back to last known state if RTSP status not available
             return self._attr_is_streaming
         return False
 
@@ -96,10 +104,19 @@ class DashieCamera(DashieEntity, Camera):
 
     async def stream_source(self) -> str | None:
         """Return the stream source URL."""
+        # First check if we have a cached URL from coordinator polling
         if self._stream_url:
             return self._stream_url
 
-        # Try to get RTSP stream URL from device
+        # Try to get URL from coordinator data (already polled)
+        if self.coordinator.data:
+            rtsp_status = self.coordinator.data.get("rtsp_status", {})
+            if rtsp_status.get("isStreaming") and rtsp_status.get("streamUrl"):
+                self._stream_url = rtsp_status["streamUrl"]
+                self._attr_is_streaming = True
+                return self._stream_url
+
+        # Fallback: fetch directly from device (for immediate response)
         try:
             timeout = aiohttp.ClientTimeout(total=5)
             async with aiohttp.ClientSession(timeout=timeout) as session:

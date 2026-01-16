@@ -99,7 +99,28 @@ class DashieCoordinator(DataUpdateCoordinator):
                 if data.get("status") == "ERROR":
                     raise UpdateFailed(data.get("message", "Unknown error"))
 
-                return data
+            # Also fetch RTSP status for camera entity
+            rtsp_data = await self._fetch_rtsp_status(session)
+            if rtsp_data:
+                data["rtsp_status"] = rtsp_data
+
+            return data
+
+    async def _fetch_rtsp_status(self, session: aiohttp.ClientSession) -> dict | None:
+        """Fetch RTSP stream status from the device."""
+        try:
+            url = f"{self.base_url}/?cmd=getRtspStatus"
+            if self.password:
+                url += f"&password={self.password}"
+
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("status") != "ERROR":
+                        return data
+        except Exception as err:
+            _LOGGER.debug("Could not fetch RTSP status: %s", err)
+        return None
 
     async def send_command(self, command: str, **kwargs) -> bool:
         """Send a command to the Dashie Lite device."""

@@ -36,6 +36,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._port: int = DEFAULT_PORT
         self._password: str = ""
         self._device_info: dict | None = None
+        self._is_dashie_lite: bool = False
 
     async def async_step_ssdp(self, discovery_info: ssdp.SsdpServiceInfo) -> FlowResult:
         """Handle SSDP discovery."""
@@ -59,8 +60,14 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="already_configured")
 
         # Get device name and HA URL from SSDP headers
-        device_name = discovery_info.upnp.get("X-DASHIE-NAME", "Dashie")
-        configured_ha_url = discovery_info.upnp.get("X-DASHIE-HA-URL")
+        # Custom X- headers are in ssdp_headers, not upnp
+        ssdp_headers = discovery_info.ssdp_headers or {}
+        device_name = ssdp_headers.get("X-DASHIE-NAME") or ssdp_headers.get("x-dashie-name") or "Dashie"
+        configured_ha_url = ssdp_headers.get("X-DASHIE-HA-URL") or ssdp_headers.get("x-dashie-ha-url")
+
+        # Detect if this is a Dashie Lite device based on service type
+        ssdp_st = discovery_info.ssdp_st or ""
+        self._is_dashie_lite = "DashieLite" in ssdp_st
 
         # Extract UUID from USN header (format: uuid:xxx::urn:dashie:service:DashieLite:1 or Dashie:1)
         usn = discovery_info.ssdp_usn or ""
@@ -122,14 +129,17 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await self.async_set_unique_id(device_id)
                     self._abort_if_unique_id_configured()
 
+                    base_name = self._device_info.get("deviceName", "Dashie")
+                    display_name = self._get_display_name(base_name)
+
                     return self.async_create_entry(
-                        title=self._device_info.get("deviceName", "Dashie"),
+                        title=display_name,
                         data={
                             CONF_HOST: self._host,
                             CONF_PORT: self._port,
                             CONF_PASSWORD: self._password,
                             CONF_DEVICE_ID: device_id,
-                            CONF_DEVICE_NAME: self._device_info.get("deviceName"),
+                            CONF_DEVICE_NAME: display_name,
                         },
                     )
                 else:
@@ -159,23 +169,25 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Confirm the discovered device."""
+        base_name = self._device_info.get("deviceName", "Dashie")
+        display_name = self._get_display_name(base_name)
+
         if user_input is not None:
             return self.async_create_entry(
-                title=self._device_info.get("deviceName", "Dashie"),
+                title=display_name,
                 data={
                     CONF_HOST: self._host,
                     CONF_PORT: self._port,
                     CONF_PASSWORD: self._password,
                     CONF_DEVICE_ID: self._device_info.get("deviceID"),
-                    CONF_DEVICE_NAME: self._device_info.get("deviceName"),
+                    CONF_DEVICE_NAME: display_name,
                 },
             )
 
-        device_name = self._device_info.get("deviceName", "Dashie")
         return self.async_show_form(
             step_id="confirm",
             description_placeholders={
-                "name": device_name,
+                "name": display_name,
                 "host": self._host,
             },
         )
@@ -230,6 +242,12 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
+    def _get_display_name(self, base_name: str) -> str:
+        """Get display name, appending ' Lite' for Dashie Lite devices."""
+        if self._is_dashie_lite and not base_name.lower().endswith("lite"):
+            return f"{base_name} Lite"
+        return base_name
 
     async def _fetch_device_info(self) -> dict:
         """Fetch device info from the device."""
