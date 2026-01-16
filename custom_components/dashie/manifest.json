@@ -3,6 +3,7 @@
   "name": "Dashie",
   "codeowners": ["@jwlerch78"],
   "config_flow": true,
+  "dependencies": ["http"],
   "documentation": "https://github.com/jwlerch78/dashie-ha-integration",
   "integration_type": "device",
   "iot_class": "local_polling",
