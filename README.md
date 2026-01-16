@@ -7,8 +7,8 @@ A Home Assistant custom integration for [Dashie Lite](https://www.dashieapp.com/
 - **Camera Stream**: Enable RTSP streaming to view the tablets camera from other HA dashboards
 - **Screen Savers**:  Shows photos from your Home Assistant My Media folder, URL, or dedicated screensaver app
 - **Auto-Discovery**: Devices are automatically discovered via SSDP when running on your network
-- **Sensors**: Battery level, screen brightness, memory usage, connection health
-- **Controls**: Screen on/off, kiosk lock, reload dashboard, bring to foreground
+- **Sensors**: Ambient light sensor, screen brightness, memory usage, connection health
+- **Controls**: Screen on/off, kiosk lock, volume, brightness, reload dashboard, bring to foreground
 - **Health Monitoring**: Track WebSocket connection status and performance metrics
 
 ## Installation
