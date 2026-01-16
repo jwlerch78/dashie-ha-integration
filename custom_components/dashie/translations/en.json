@@ -1,0 +1,113 @@
+{
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dashie Options",
+        "description": "Configure screensaver photos for **{device_name}**.\n\nUpload photos to Home Assistant via **Media > Local Media > Manage**, then specify the folder name below.",
+        "data": {
+          "media_folder": "Media Folder"
+        },
+        "data_description": {
+          "media_folder": "Use '.' for root media folder, or specify a subfolder name (e.g., 'family-photos')"
+        }
+      }
+    }
+  },
+  "config": {
+    "step": {
+      "confirm": {
+        "title": "Dashie Device Discovered",
+        "description": "Do you want to set up **{name}** at `{host}`?"
+      },
+      "password": {
+        "title": "Enter Password",
+        "description": "The device at `{host}` requires a password.",
+        "data": {
+          "password": "Password"
+        }
+      },
+      "user": {
+        "title": "Add Dashie Device",
+        "description": "Enter the IP address of your Dashie device.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "password": "Password (optional)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "no_location": "No location in SSDP response",
+      "no_device_id": "Could not get device ID",
+      "cannot_connect": "Cannot connect to device"
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to device",
+      "no_device_id": "Could not get device ID",
+      "invalid_auth": "Invalid password"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      },
+      "brightness": {
+        "name": "Brightness"
+      },
+      "memory": {
+        "name": "Memory Used"
+      }
+    },
+    "switch": {
+      "screen": {
+        "name": "Screen"
+      },
+      "screensaver": {
+        "name": "Screensaver"
+      },
+      "lock": {
+        "name": "Lock"
+      },
+      "dark_mode": {
+        "name": "Dark Mode"
+      }
+    },
+    "binary_sensor": {
+      "plugged": {
+        "name": "Plugged In"
+      },
+      "screensaver_active": {
+        "name": "Screensaver Active"
+      },
+      "pin_set": {
+        "name": "PIN Set"
+      }
+    },
+    "text": {
+      "load_url": {
+        "name": "Load URL"
+      },
+      "pin": {
+        "name": "Lock PIN"
+      }
+    },
+    "button": {
+      "reload": {
+        "name": "Reload Dashboard"
+      },
+      "foreground": {
+        "name": "Bring to Foreground"
+      }
+    },
+    "number": {
+      "brightness_control": {
+        "name": "Brightness"
+      },
+      "volume": {
+        "name": "Volume"
+      }
+    }
+  }
+}
