@@ -3,14 +3,20 @@
     "step": {
       "init": {
         "title": "Dashie Options",
-        "description": "Configure screensaver photos for **{device_name}**.\n\nUpload photos to Home Assistant via **Media > Local Media > Manage**, then specify the folder name below.",
+        "description": "Configure settings for **{device_name}**.",
         "data": {
+          "password": "API Password",
           "media_folder": "Media Folder"
         },
         "data_description": {
+          "password": "Password set in Dashie Lite sidebar settings (leave empty for no password)",
           "media_folder": "Use '.' for root media folder, or specify a subfolder name (e.g., 'family-photos')"
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to device",
+      "invalid_auth": "Invalid password - make sure it matches the password set in Dashie Lite"
     }
   },
   "config": {
