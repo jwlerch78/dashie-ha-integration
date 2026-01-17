@@ -168,25 +168,32 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Confirm the discovered device."""
+        """Confirm the discovered device and optionally set password."""
         base_name = self._device_info.get("deviceName", "Dashie")
         display_name = self._get_display_name(base_name)
 
         if user_input is not None:
+            # Get optional password from form
+            password = user_input.get(CONF_PASSWORD, "")
+
             return self.async_create_entry(
                 title=display_name,
                 data={
                     CONF_HOST: self._host,
                     CONF_PORT: self._port,
-                    CONF_PASSWORD: self._password,
+                    CONF_PASSWORD: password,
                     CONF_DEVICE_ID: self._device_info.get("deviceID"),
                     CONF_DEVICE_NAME: display_name,
                 },
             )
 
-        self._set_confirm_only()
         return self.async_show_form(
             step_id="confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_PASSWORD, default=""): str,
+                }
+            ),
             description_placeholders={
                 "name": display_name,
                 "host": self._host,
