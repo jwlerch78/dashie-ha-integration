@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -14,6 +15,9 @@ from .const import (
     CONF_DEVICE_ID,
     API_SET_SCREENSAVER_MODE,
     API_SET_HA_MEDIA_FOLDER,
+    API_SET_STRING_SETTING,
+    SETTING_MOTION_WAKE_MODE,
+    MOTION_WAKE_MODES,
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
@@ -34,6 +38,7 @@ async def async_setup_entry(
     entities = [
         DashieScreensaverModeSelect(coordinator, device_id),
         DashieScreensaverPhotoFolderSelect(coordinator, device_id, hass),
+        DashieMotionWakeModeSelect(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -44,6 +49,7 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
 
     _attr_icon = "mdi:sleep"
     _attr_translation_key = "screensaver_mode"
+    _attr_entity_category = EntityCategory.CONFIG
 
     # Map API values to display values
     _mode_display_map = {
@@ -58,7 +64,7 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_screensaver_mode"
-        self._attr_name = "Screensaver Mode"
+        self._attr_name = "Screensaver: Mode"
         self._attr_options = ["Dim", "Black", "URL", "Photos", "App"]
 
     @property
@@ -83,13 +89,14 @@ class DashieScreensaverPhotoFolderSelect(DashieEntity, SelectEntity):
 
     _attr_icon = "mdi:folder-image"
     _attr_translation_key = "screensaver_photo_src_folder"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str, hass: HomeAssistant) -> None:
         """Initialize the select."""
         super().__init__(coordinator, device_id)
         self._hass = hass
         self._attr_unique_id = f"{device_id}_screensaver_photo_src_folder"
-        self._attr_name = "Screensaver Photo Src Folder"
+        self._attr_name = "Screensaver: Photo Src Folder"
         self._cached_folders: list[dict] = []
         self._attr_options = ["(root)"]  # Default until we fetch folders
 
@@ -166,3 +173,40 @@ class DashieScreensaverPhotoFolderSelect(DashieEntity, SelectEntity):
         # Refresh folder list if we don't have any cached
         if not self._cached_folders or len(self._cached_folders) == 0:
             await self._update_folder_options()
+
+
+class DashieMotionWakeModeSelect(DashieEntity, SelectEntity):
+    """Motion wake mode select - how the device wakes from screensaver."""
+
+    _attr_icon = "mdi:motion-sensor"
+    _attr_translation_key = "motion_wake_mode"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the select."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_motion_wake_mode"
+        self._attr_name = "Screensaver: Motion Wake"
+        # Options from MOTION_WAKE_MODES values
+        self._attr_options = list(MOTION_WAKE_MODES.values())
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the current motion wake mode."""
+        if self.coordinator.data:
+            mode = self.coordinator.data.get("motionWakeMode", "disabled")
+            return MOTION_WAKE_MODES.get(mode, "Disabled")
+        return None
+
+    async def async_select_option(self, option: str) -> None:
+        """Set the motion wake mode."""
+        # Find the API value for this display option
+        mode_key = "disabled"
+        for key, value in MOTION_WAKE_MODES.items():
+            if value == option:
+                mode_key = key
+                break
+        await self.coordinator.send_command(
+            API_SET_STRING_SETTING, key=SETTING_MOTION_WAKE_MODE, value=mode_key
+        )
+        await self.coordinator.async_request_refresh()

@@ -7,6 +7,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, CONF_DEVICE_ID
@@ -37,6 +38,7 @@ class DashiePluggedSensor(DashieEntity, BinarySensorEntity):
 
     _attr_device_class = BinarySensorDeviceClass.PLUG
     _attr_translation_key = "plugged"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
@@ -67,6 +69,7 @@ class DashieScreensaverSensor(DashieEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:sleep"
     _attr_translation_key = "screensaver_active"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
@@ -88,6 +91,7 @@ class DashiePinSetSensor(DashieEntity, BinarySensorEntity):
     # Don't use LOCK device class - it shows "Unlocked" when is_on=True which is confusing
     # We want: PIN set (True) = "Set", PIN not set (False) = "Not Set"
     _attr_translation_key = "pin_set"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""

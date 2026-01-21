@@ -7,6 +7,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -14,6 +15,8 @@ from .const import (
     CONF_DEVICE_ID,
     API_SET_BRIGHTNESS,
     API_SET_VOLUME,
+    API_SET_STRING_SETTING,
+    SETTING_ZOOM,
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
@@ -29,8 +32,16 @@ async def async_setup_entry(
     device_id = entry.data[CONF_DEVICE_ID]
 
     entities = [
+        # =================================================================
+        # CONTROLS (Primary - no category)
+        # =================================================================
         DashieBrightnessNumber(coordinator, device_id),
         DashieVolumeNumber(coordinator, device_id),
+
+        # =================================================================
+        # CONFIGURATION (CONFIG category)
+        # =================================================================
+        DashieZoomNumber(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -109,5 +120,46 @@ class DashieVolumeNumber(DashieEntity, NumberEntity):
             API_SET_VOLUME,
             level=str(api_volume),
             stream="3"  # STREAM_MUSIC
+        )
+        await self.coordinator.async_request_refresh()
+
+
+# =============================================================================
+# CONFIGURATION (CONFIG category)
+# =============================================================================
+
+
+class DashieZoomNumber(DashieEntity, NumberEntity):
+    """Zoom/text scaling number entity."""
+
+    _attr_native_min_value = 50
+    _attr_native_max_value = 200
+    _attr_native_step = 10
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_mode = NumberMode.SLIDER
+    _attr_icon = "mdi:magnify-plus-outline"
+    _attr_translation_key = "zoom"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_zoom"
+        self._attr_name = "Zoom"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current zoom/text scaling level."""
+        if self.coordinator.data:
+            # textScaling is stored as percentage (50-200)
+            return self.coordinator.data.get("textScaling", 100)
+        return None
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the zoom level."""
+        await self.coordinator.send_command(
+            API_SET_STRING_SETTING,
+            key=SETTING_ZOOM,
+            value=str(int(value))
         )
         await self.coordinator.async_request_refresh()

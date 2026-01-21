@@ -1,33 +1,15 @@
-# Services for Dashie Lite integration
+# =============================================================================
+# Dashie Lite Integration Services
+# =============================================================================
+#
+# Services are organized by function to match the Dashie Lite sidebar sections.
+#
 
-send_command:
-  name: Send Command
-  description: Send a command to a Dashie Lite device
-  fields:
-    device_id:
-      name: Device ID
-      description: The device to send the command to (entity ID or device ID)
-      required: true
-      selector:
-        entity:
-          integration: dashie
-    command:
-      name: Command
-      description: The command to send
-      required: true
-      selector:
-        select:
-          options:
-            - screenOn
-            - screenOff
-            - startScreensaver
-            - stopScreensaver
-            - loadStartUrl
-            - restartApp
-            - toForeground
-            - lockKiosk
-            - unlockKiosk
-            - clearCache
+
+# =============================================================================
+# DISPLAY & NAVIGATION
+# =============================================================================
+# Control screen brightness, load URLs, and navigate the dashboard.
 
 load_url:
   name: Load URL
@@ -43,24 +25,6 @@ load_url:
     url:
       name: URL
       description: The URL to load
-      required: true
-      selector:
-        text:
-
-speak:
-  name: Speak Text
-  description: Use text-to-speech on a Dashie device
-  fields:
-    device_id:
-      name: Device ID
-      description: The device to speak on
-      required: true
-      selector:
-        entity:
-          integration: dashie
-    message:
-      name: Message
-      description: The text to speak
       required: true
       selector:
         text:
@@ -87,6 +51,12 @@ set_brightness:
           step: 5
           unit_of_measurement: "%"
 
+
+# =============================================================================
+# AUDIO & SPEECH
+# =============================================================================
+# Control volume and text-to-speech.
+
 set_volume:
   name: Set Volume
   description: Set the audio volume on a Dashie device
@@ -108,36 +78,30 @@ set_volume:
           max: 10
           step: 1
 
-show_message:
-  name: Show Message
-  description: Display an overlay message on a Dashie device
+speak:
+  name: Speak Text
+  description: Use text-to-speech on a Dashie device
   fields:
     device_id:
       name: Device ID
-      description: The device to show the message on
+      description: The device to speak on
       required: true
       selector:
         entity:
           integration: dashie
     message:
       name: Message
-      description: The message to display
+      description: The text to speak
       required: true
       selector:
         text:
-    duration:
-      name: Duration
-      description: How long to show the message (milliseconds)
-      default: 3000
-      selector:
-        number:
-          min: 1000
-          max: 30000
-          step: 1000
-          unit_of_measurement: "ms"
 
-# Timer services (internal timer management - no HA timer helpers required)
-# Supports up to 3 concurrent timers with automatic slot assignment
+
+# =============================================================================
+# TIMERS (Unique to Dashie!)
+# =============================================================================
+# Internal timer management - no Home Assistant timer helpers required.
+# Supports up to 3 concurrent timers with automatic slot assignment.
 
 start_timer:
   name: Start Timer
@@ -197,3 +161,73 @@ cancel_timer:
       required: false
       selector:
         text:
+
+
+# =============================================================================
+# NOTIFICATIONS & MESSAGING
+# =============================================================================
+# Display overlay messages and notifications.
+
+show_message:
+  name: Show Message
+  description: Display an overlay message on a Dashie device
+  fields:
+    device_id:
+      name: Device ID
+      description: The device to show the message on
+      required: true
+      selector:
+        entity:
+          integration: dashie
+    message:
+      name: Message
+      description: The message to display
+      required: true
+      selector:
+        text:
+    duration:
+      name: Duration
+      description: How long to show the message (milliseconds)
+      default: 3000
+      selector:
+        number:
+          min: 1000
+          max: 30000
+          step: 1000
+          unit_of_measurement: "ms"
+
+
+# =============================================================================
+# ADVANCED / LOW-LEVEL
+# =============================================================================
+# Direct command execution for advanced users and automation.
+
+send_command:
+  name: Send Command
+  description: Send a low-level command to a Dashie Lite device (for advanced use)
+  fields:
+    device_id:
+      name: Device ID
+      description: The device to send the command to (entity ID or device ID)
+      required: true
+      selector:
+        entity:
+          integration: dashie
+    command:
+      name: Command
+      description: The command to send
+      required: true
+      selector:
+        select:
+          options:
+            - screenOn
+            - screenOff
+            - startScreensaver
+            - stopScreensaver
+            - loadStartUrl
+            - restartApp
+            - toForeground
+            - lockKiosk
+            - unlockKiosk
+            - clearCache
+            - clearWebstorage

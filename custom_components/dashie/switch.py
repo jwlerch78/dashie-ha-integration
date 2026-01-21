@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity, SwitchDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -19,6 +20,15 @@ from .const import (
     API_START_SCREENSAVER,
     API_STOP_SCREENSAVER,
     API_SET_DARK_MODE,
+    API_SET_BOOLEAN_SETTING,
+    API_START_RTSP_STREAM,
+    API_STOP_RTSP_STREAM,
+    SETTING_KEEP_SCREEN_ON,
+    SETTING_AUTO_BRIGHTNESS,
+    SETTING_START_ON_BOOT,
+    SETTING_HIDE_SIDEBAR,
+    SETTING_HIDE_HEADER,
+    SETTING_RTSP_SOFTWARE_ENCODING,
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
@@ -36,23 +46,48 @@ async def async_setup_entry(
     device_id = entry.data[CONF_DEVICE_ID]
 
     entities = [
+        # =================================================================
+        # CONTROLS (Primary - no category, shown prominently)
+        # =================================================================
         DashieScreenSwitch(coordinator, device_id),
         DashieScreensaverSwitch(coordinator, device_id),
         DashieLockSwitch(coordinator, device_id),
-    ]
 
-    # Dark mode switch (may be unavailable on Fire Tablets)
-    entities.append(DashieDarkModeSwitch(coordinator, device_id))
+        # =================================================================
+        # DISPLAY (CONFIG category with "Display:" prefix)
+        # =================================================================
+        DashieKeepScreenOnSwitch(coordinator, device_id),
+        DashieAutoBrightnessSwitch(coordinator, device_id),
+        DashieDarkModeSwitch(coordinator, device_id),  # May be unavailable on Fire Tablets
+
+        # =================================================================
+        # CAMERA (CONFIG category with "Camera:" prefix)
+        # =================================================================
+        DashieRtspStreamSwitch(coordinator, device_id),
+        DashieSoftwareEncodingSwitch(coordinator, device_id),
+
+        # =================================================================
+        # CONFIGURATION (CONFIG category with "Config:" prefix)
+        # =================================================================
+        DashieHideSidebarSwitch(coordinator, device_id),
+        DashieHideTabsSwitch(coordinator, device_id),
+
+        # =================================================================
+        # SYSTEM (CONFIG category with "System:" prefix)
+        # =================================================================
+        DashieStartOnBootSwitch(coordinator, device_id),
+    ]
 
     async_add_entities(entities)
 
 
 class DashieScreenSwitch(DashieEntity, SwitchEntity):
-    """Screen on/off switch."""
+    """Screen on/off switch - PRIMARY CONTROL."""
 
     _attr_device_class = SwitchDeviceClass.SWITCH
     _attr_icon = "mdi:monitor"
     _attr_translation_key = "screen"
+    # No EntityCategory = Primary control (shown prominently)
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the switch."""
@@ -80,11 +115,12 @@ class DashieScreenSwitch(DashieEntity, SwitchEntity):
 
 
 class DashieScreensaverSwitch(DashieEntity, SwitchEntity):
-    """Screensaver switch."""
+    """Screensaver switch - PRIMARY CONTROL."""
 
     _attr_device_class = SwitchDeviceClass.SWITCH
     _attr_icon = "mdi:sleep"
     _attr_translation_key = "screensaver"
+    # No EntityCategory = Primary control (shown prominently)
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the switch."""
@@ -147,6 +183,7 @@ class DashieDarkModeSwitch(DashieEntity, SwitchEntity):
     _attr_device_class = SwitchDeviceClass.SWITCH
     _attr_icon = "mdi:theme-light-dark"
     _attr_translation_key = "dark_mode"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the switch."""
@@ -185,4 +222,313 @@ class DashieDarkModeSwitch(DashieEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable dark mode."""
         await self.coordinator.send_command(API_SET_DARK_MODE, value="false")
+        await self.coordinator.async_request_refresh()
+
+
+# =============================================================================
+# Home Assistant Section (CONFIG category)
+# =============================================================================
+
+
+class DashieHideSidebarSwitch(DashieEntity, SwitchEntity):
+    """Hide sidebar switch - hides the HA sidebar in the WebView."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:page-layout-sidebar-left"
+    _attr_translation_key = "hide_sidebar"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_hide_sidebar"
+        self._attr_name = "Hide Sidebar"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if sidebar is hidden."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("hideSidebar", False)
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Hide the sidebar."""
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_HIDE_SIDEBAR, value="true"
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Show the sidebar."""
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_HIDE_SIDEBAR, value="false"
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class DashieHideTabsSwitch(DashieEntity, SwitchEntity):
+    """Hide tabs switch - hides the HA header/tabs in the WebView."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:tab-remove"
+    _attr_translation_key = "hide_tabs"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_hide_tabs"
+        self._attr_name = "Hide Tabs"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if tabs/header is hidden."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("hideHeader", False)
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Hide the tabs/header."""
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_HIDE_HEADER, value="true"
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Show the tabs/header."""
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_HIDE_HEADER, value="false"
+        )
+        await self.coordinator.async_request_refresh()
+
+
+# =============================================================================
+# Display Settings (CONFIG category)
+# =============================================================================
+
+
+class DashieKeepScreenOnSwitch(DashieEntity, SwitchEntity):
+    """Keep screen on switch - prevents screensaver activation."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:monitor-eye"
+    _attr_translation_key = "keep_screen_on"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_keep_screen_on"
+        self._attr_name = "Keep Screen On"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if keep screen on is enabled."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("keepScreenOn", False)
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable keep screen on."""
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_KEEP_SCREEN_ON, value="true"
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable keep screen on."""
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_KEEP_SCREEN_ON, value="false"
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class DashieAutoBrightnessSwitch(DashieEntity, SwitchEntity):
+    """Auto brightness switch - uses ambient light sensor."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:brightness-auto"
+    _attr_translation_key = "auto_brightness"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_auto_brightness"
+        self._attr_name = "Auto Brightness"
+
+    @property
+    def available(self) -> bool:
+        """Return True if auto brightness control is available."""
+        if not super().available:
+            return False
+        if not self.coordinator.data:
+            return False
+        # Requires WRITE_SETTINGS permission on Android
+        return self.coordinator.data.get("canControlBrightness", True)
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if auto brightness is enabled."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("autoBrightness", False)
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable auto brightness."""
+        success = await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_AUTO_BRIGHTNESS, value="true"
+        )
+        if success:
+            # Optimistic update for immediate UI feedback
+            self.coordinator.update_local_data(autoBrightness=True)
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable auto brightness."""
+        success = await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_AUTO_BRIGHTNESS, value="false"
+        )
+        if success:
+            # Optimistic update for immediate UI feedback
+            self.coordinator.update_local_data(autoBrightness=False)
+        await self.coordinator.async_request_refresh()
+
+
+# =============================================================================
+# System Settings (CONFIG category)
+# =============================================================================
+
+
+class DashieStartOnBootSwitch(DashieEntity, SwitchEntity):
+    """Start on boot switch - auto-launch app when device boots."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:power"
+    _attr_translation_key = "start_on_boot"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_start_on_boot"
+        self._attr_name = "Start on Boot"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if start on boot is enabled."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("startOnBoot", False)
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable start on boot."""
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_START_ON_BOOT, value="true"
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable start on boot."""
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_START_ON_BOOT, value="false"
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class DashieRtspStreamSwitch(DashieEntity, SwitchEntity):
+    """RTSP camera stream enable/disable switch."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:video"
+    _attr_translation_key = "rtsp_stream"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_rtsp_stream"
+        self._attr_name = "Camera Stream Enabled"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if RTSP streaming is enabled (preference setting)."""
+        if self.coordinator.data:
+            # Read from rtspEnabled preference (not isStreaming which is actual state)
+            return self.coordinator.data.get("rtspEnabled", False)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return RTSP stream attributes."""
+        if not self.coordinator.data:
+            return {}
+        # Coordinator stores as rtsp_status (underscore), API returns streamUrl
+        rtsp_status = self.coordinator.data.get("rtsp_status", {})
+        if isinstance(rtsp_status, dict):
+            return {
+                "stream_url": rtsp_status.get("streamUrl"),
+                "client_count": rtsp_status.get("clientCount", 0),
+            }
+        return {}
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Start RTSP streaming."""
+        success = await self.coordinator.send_command(API_START_RTSP_STREAM)
+        if success:
+            # Optimistic update for immediate UI feedback
+            self.coordinator.update_local_data(rtspEnabled=True)
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Stop RTSP streaming."""
+        success = await self.coordinator.send_command(API_STOP_RTSP_STREAM)
+        if success:
+            # Optimistic update for immediate UI feedback
+            self.coordinator.update_local_data(rtspEnabled=False)
+        await self.coordinator.async_request_refresh()
+
+
+class DashieSoftwareEncodingSwitch(DashieEntity, SwitchEntity):
+    """Software encoding switch for RTSP stream."""
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_icon = "mdi:cpu-32-bit"
+    _attr_translation_key = "software_encoding"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_software_encoding"
+        self._attr_name = "Camera Software Encoding"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if software encoding is enabled."""
+        if self.coordinator.data:
+            # Prefer top-level rtspSoftwareEncoding, fallback to rtsp_config
+            if "rtspSoftwareEncoding" in self.coordinator.data:
+                return self.coordinator.data.get("rtspSoftwareEncoding", False)
+            rtsp_config = self.coordinator.data.get("rtsp_config", {})
+            if isinstance(rtsp_config, dict):
+                return rtsp_config.get("softwareEncoding", False)
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable software encoding."""
+        success = await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_SOFTWARE_ENCODING, value="true"
+        )
+        if success:
+            self.coordinator.update_local_data(rtspSoftwareEncoding=True)
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable software encoding (use hardware encoding)."""
+        success = await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_SOFTWARE_ENCODING, value="false"
+        )
+        if success:
+            self.coordinator.update_local_data(rtspSoftwareEncoding=False)
         await self.coordinator.async_request_refresh()

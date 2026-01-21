@@ -9,6 +9,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfInformation, LIGHT_LUX
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, CONF_DEVICE_ID
@@ -26,11 +27,28 @@ async def async_setup_entry(
     device_id = entry.data[CONF_DEVICE_ID]
 
     entities = [
-        DashieBatterySensor(coordinator, device_id),
+        # =================================================================
+        # SENSORS (Primary - no category, shown in Sensors section)
+        # =================================================================
         DashieLightSensor(coordinator, device_id),
+
+        # =================================================================
+        # CAMERA INFO (DIAGNOSTIC category - read-only camera settings)
+        # =================================================================
+        DashieCameraFrameRateSensor(coordinator, device_id),
+        DashieCameraResolutionSensor(coordinator, device_id),
+        DashieCameraStreamUrlSensor(coordinator, device_id),
+
+        # =================================================================
+        # STATUS (DIAGNOSTIC category, shown in Status section)
+        # =================================================================
+        DashieAndroidVersionSensor(coordinator, device_id),
+        DashieAppVersionSensor(coordinator, device_id),
+        DashieBatterySensor(coordinator, device_id),
         DashieCurrentPageSensor(coordinator, device_id),
-        DashieWifiSignalSensor(coordinator, device_id),
+        DashieDeviceIdSensor(coordinator, device_id),
         DashieStorageSensor(coordinator, device_id),
+        DashieWifiSignalSensor(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -43,6 +61,7 @@ class DashieBatterySensor(DashieEntity, SensorEntity):
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_translation_key = "battery"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
@@ -68,13 +87,14 @@ class DashieBatterySensor(DashieEntity, SensorEntity):
 
 
 class DashieLightSensor(DashieEntity, SensorEntity):
-    """Ambient light sensor."""
+    """Ambient light sensor - shown in Sensors section."""
 
     _attr_device_class = SensorDeviceClass.ILLUMINANCE
     _attr_native_unit_of_measurement = LIGHT_LUX
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:brightness-5"
     _attr_translation_key = "light"
+    # No EntityCategory = shown in Sensors section (not Status)
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
@@ -95,6 +115,7 @@ class DashieCurrentPageSensor(DashieEntity, SensorEntity):
 
     _attr_icon = "mdi:web"
     _attr_translation_key = "current_page"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
@@ -117,6 +138,7 @@ class DashieWifiSignalSensor(DashieEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:wifi"
     _attr_translation_key = "wifi_signal"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
@@ -151,6 +173,7 @@ class DashieStorageSensor(DashieEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:harddisk"
     _attr_translation_key = "storage"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the sensor."""
@@ -176,3 +199,166 @@ class DashieStorageSensor(DashieEntity, SensorEntity):
         return {
             "total_gb": round(total_bytes / (1024 ** 3), 2) if total_bytes else None,
         }
+
+
+class DashieDeviceIdSensor(DashieEntity, SensorEntity):
+    """Device ID sensor - unique identifier for the device."""
+
+    _attr_icon = "mdi:identifier"
+    _attr_translation_key = "device_id"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_device_id"
+        self._attr_name = "Device ID"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the device ID."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("deviceID")
+        return None
+
+
+class DashieAndroidVersionSensor(DashieEntity, SensorEntity):
+    """Android version sensor - OS version of the device."""
+
+    _attr_icon = "mdi:android"
+    _attr_translation_key = "android_version"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_android_version"
+        self._attr_name = "Android Version"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the Android version."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("androidVersion")
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional device attributes."""
+        if not self.coordinator.data:
+            return {}
+        return {
+            "device_model": self.coordinator.data.get("deviceModel"),
+            "device_manufacturer": self.coordinator.data.get("deviceManufacturer"),
+        }
+
+
+class DashieAppVersionSensor(DashieEntity, SensorEntity):
+    """App version sensor - Dashie Lite version."""
+
+    _attr_icon = "mdi:application-cog"
+    _attr_translation_key = "app_version"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_app_version"
+        self._attr_name = "App Version"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the app version."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("appVersionName")
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional version attributes."""
+        if not self.coordinator.data:
+            return {}
+        return {
+            "version_code": self.coordinator.data.get("appVersionCode"),
+        }
+
+
+# =============================================================================
+# CAMERA INFO (DIAGNOSTIC category - Camera settings are read-only sensors)
+# =============================================================================
+
+
+class DashieCameraFrameRateSensor(DashieEntity, SensorEntity):
+    """Camera frame rate sensor."""
+
+    _attr_icon = "mdi:filmstrip"
+    _attr_translation_key = "camera_frame_rate"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_native_unit_of_measurement = "fps"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_camera_frame_rate"
+        self._attr_name = "Camera Frame Rate"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the camera frame rate."""
+        if self.coordinator.data:
+            # Frame rate comes from rtsp_config (getRtspConfig API), field is "fps"
+            rtsp_config = self.coordinator.data.get("rtsp_config", {})
+            if isinstance(rtsp_config, dict):
+                return rtsp_config.get("fps")
+        return None
+
+
+class DashieCameraResolutionSensor(DashieEntity, SensorEntity):
+    """Camera resolution sensor."""
+
+    _attr_icon = "mdi:monitor-screenshot"
+    _attr_translation_key = "camera_resolution"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_camera_resolution"
+        self._attr_name = "Camera Resolution"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the camera resolution."""
+        if self.coordinator.data:
+            # Resolution comes from rtsp_config (getRtspConfig API)
+            rtsp_config = self.coordinator.data.get("rtsp_config", {})
+            if isinstance(rtsp_config, dict):
+                width = rtsp_config.get("width")
+                height = rtsp_config.get("height")
+                if width and height:
+                    return f"{width}x{height}"
+        return None
+
+
+class DashieCameraStreamUrlSensor(DashieEntity, SensorEntity):
+    """Camera stream URL sensor."""
+
+    _attr_icon = "mdi:link"
+    _attr_translation_key = "camera_stream_url"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_camera_stream_url"
+        self._attr_name = "Camera Stream URL"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the RTSP stream URL."""
+        if self.coordinator.data:
+            # Stream URL comes from rtsp_status (getRtspStatus API), field is "streamUrl"
+            rtsp_status = self.coordinator.data.get("rtsp_status", {})
+            if isinstance(rtsp_status, dict):
+                return rtsp_status.get("streamUrl")
+        return None
