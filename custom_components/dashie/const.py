@@ -13,7 +13,7 @@ CONF_MEDIA_BASE_PATH = "media_base_path"
 
 # Defaults
 DEFAULT_PORT = 2323
-DEFAULT_SCAN_INTERVAL = 15
+DEFAULT_SCAN_INTERVAL = 5
 DEFAULT_MEDIA_FOLDER = "."  # Root of media folder
 DEFAULT_MEDIA_BASE_PATH = ""  # Empty = use /config/media, otherwise absolute path
 

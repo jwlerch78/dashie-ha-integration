@@ -113,6 +113,17 @@ class DashieScreenSwitch(DashieEntity, SwitchEntity):
         await self.coordinator.send_command(API_SCREEN_OFF)
         await self.coordinator.async_request_refresh()
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional attributes."""
+        if not self.coordinator.data:
+            return {}
+        is_device_admin = self.coordinator.data.get("isDeviceAdmin", False)
+        return {
+            "hardware_screen_off_available": is_device_admin,
+            "screen_off_mode": "hardware" if is_device_admin else "overlay",
+        }
+
 
 class DashieScreensaverSwitch(DashieEntity, SwitchEntity):
     """Screensaver switch - PRIMARY CONTROL."""

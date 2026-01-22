@@ -28,6 +28,7 @@ async def async_setup_entry(
         DashiePluggedSensor(coordinator, device_id),
         DashieScreensaverSensor(coordinator, device_id),
         DashiePinSetSensor(coordinator, device_id),
+        DashieDeviceAdminSensor(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -112,3 +113,45 @@ class DashiePinSetSensor(DashieEntity, BinarySensorEntity):
         if self.is_on:
             return "mdi:lock-check"
         return "mdi:lock-open-outline"
+
+
+class DashieDeviceAdminSensor(DashieEntity, BinarySensorEntity):
+    """Device Admin enabled binary sensor.
+
+    Indicates whether Dashie Lite has Device Admin permission, which is required
+    for hardware screen off. Without this permission, screenOff falls back to
+    a black overlay instead of actually turning off the display hardware.
+    """
+
+    _attr_translation_key = "device_admin"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_device_admin"
+        self._attr_name = "Device Admin"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if Device Admin is enabled."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("isDeviceAdmin", False)
+        return None
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on Device Admin state."""
+        if self.is_on:
+            return "mdi:shield-check"
+        return "mdi:shield-alert-outline"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional attributes explaining the permission."""
+        return {
+            "description": "Device Admin permission is required for hardware screen off. "
+                           "Without it, screenOff uses a black overlay instead.",
+            "how_to_enable": "In Dashie Lite settings, set screensaver mode to 'Screen Off' "
+                             "and grant the permission when prompted.",
+        }
