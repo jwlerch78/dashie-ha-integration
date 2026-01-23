@@ -80,8 +80,9 @@ class DashieCamera(DashieEntity, Camera):
     ) -> bytes | None:
         """Return a still image from the camera.
 
-        Note: Images are rotated 180° to correct the upside-down orientation caused by
-        Home Assistant's native stream player ignoring RTSP rotation metadata.
+        Note: Images are rotated 180° and horizontally flipped to match the RTSP stream
+        orientation. The RTSP stream uses OpenGL filters to un-mirror the front camera
+        (Android v2.21.9B+). This ensures snapshots match the live stream appearance.
         """
         try:
             timeout = aiohttp.ClientTimeout(total=10)
@@ -96,14 +97,17 @@ class DashieCamera(DashieEntity, Camera):
                         if "image" in content_type:
                             image_data = await response.read()
 
-                            # Rotate image 180° to fix upside-down orientation
+                            # Fix orientation to match RTSP stream:
+                            # 1. Rotate 180° (upside down fix)
+                            # 2. Horizontal flip (un-mirror front camera)
                             try:
                                 image = Image.open(io.BytesIO(image_data))
                                 rotated = image.rotate(180, expand=True)
+                                flipped = rotated.transpose(Image.FLIP_LEFT_RIGHT)
 
                                 # Convert back to JPEG bytes
                                 output = io.BytesIO()
-                                rotated.save(output, format="JPEG", quality=85)
+                                flipped.save(output, format="JPEG", quality=85)
                                 self._last_image = output.getvalue()
                                 return self._last_image
                             except Exception as err:

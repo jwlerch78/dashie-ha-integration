@@ -64,28 +64,29 @@ Each Dashie Lite device creates the following entities:
 |--------|-------------|
 | `camera.{device}` | Live camera stream |
 
-**Note about camera rotation**:
-- **Snapshots**: Automatically rotated 180° to fix upside-down orientation in HA
-- **Live Stream**: The RTSP stream uses rotation metadata tags that work correctly in VLC and WebRTC clients, but Home Assistant's native stream player ignores this metadata, causing upside-down video.
+**Note about camera orientation**:
+- **Snapshots**: Automatically rotated 180° and horizontally flipped to match RTSP stream
+- **Live Stream**: The RTSP stream is un-mirrored at source using OpenGL filters (Android v2.21.9B+)
+- **HA Native Player**: May still appear upside down due to RTSP rotation metadata being ignored
 
-**For correct live stream orientation**, use one of these options:
+**For correct live stream orientation in HA**, use one of these options:
 
 1. **WebRTC Card** (recommended): Install a WebRTC custom card like [WebRTC Camera](https://github.com/AlexxIT/WebRTC)
    - Respects RTSP rotation metadata
+   - Shows correctly oriented video
    - Lower latency than HA's native player
-   - Better mobile support
 
-2. **go2rtc with rotation** (for HA native player): Configure go2rtc to transcode with physical rotation
+2. **go2rtc with rotation** (for HA native player): Configure go2rtc to apply 180° rotation
    ```yaml
    go2rtc:
      streams:
        dashie_camera:
          - rtsp://[device-ip]:8554/
-         - "ffmpeg:dashie_camera#video=h264#hardware#rotate=180"
+         - "ffmpeg:dashie_camera#video=h264#hardware#vflip"
    ```
-   Then use `rtsp://localhost:8554/dashie_camera` as your camera source.
+   The `vflip` rotates 180° (stream is already un-mirrored at source). Then use `rtsp://localhost:8554/dashie_camera` as your camera source.
 
-3. **Fix at source** (advanced): Modify the Android app's RTSP encoder rotation settings
+**Technical Details**: Dashie Lite v2.21.9B+ applies a horizontal flip filter using RootEncoder's RotationFilterRender to un-mirror the front camera at the source level. This provides correct orientation in all RTSP clients (VLC, WebRTC, etc.) without relying on metadata tags.
 
 ## Services
 
