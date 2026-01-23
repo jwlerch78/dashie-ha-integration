@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from typing import Any
 
 import aiohttp
+from PIL import Image
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
@@ -76,7 +78,11 @@ class DashieCamera(DashieEntity, Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        """Return a still image from the camera."""
+        """Return a still image from the camera.
+
+        Note: Images are rotated 180° to correct the upside-down orientation caused by
+        Home Assistant's native stream player ignoring RTSP rotation metadata.
+        """
         try:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -88,8 +94,22 @@ class DashieCamera(DashieEntity, Camera):
                     if response.status == 200:
                         content_type = response.headers.get("Content-Type", "")
                         if "image" in content_type:
-                            self._last_image = await response.read()
-                            return self._last_image
+                            image_data = await response.read()
+
+                            # Rotate image 180° to fix upside-down orientation
+                            try:
+                                image = Image.open(io.BytesIO(image_data))
+                                rotated = image.rotate(180, expand=True)
+
+                                # Convert back to JPEG bytes
+                                output = io.BytesIO()
+                                rotated.save(output, format="JPEG", quality=85)
+                                self._last_image = output.getvalue()
+                                return self._last_image
+                            except Exception as err:
+                                _LOGGER.warning("Failed to rotate image: %s (returning original)", err)
+                                self._last_image = image_data
+                                return self._last_image
                         # API returned JSON error instead of image
                         _LOGGER.debug("Camera returned non-image response")
                         return self._last_image  # Return cached image if available

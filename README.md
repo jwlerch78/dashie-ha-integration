@@ -64,19 +64,28 @@ Each Dashie Lite device creates the following entities:
 |--------|-------------|
 | `camera.{device}` | Live camera stream |
 
-**Note about camera rotation**: The RTSP stream uses rotation metadata tags that work correctly in VLC and WebRTC clients. However, Home Assistant's native stream player doesn't handle rotation metadata properly, so the video may appear upside down.
+**Note about camera rotation**:
+- **Snapshots**: Automatically rotated 180° to fix upside-down orientation in HA
+- **Live Stream**: The RTSP stream uses rotation metadata tags that work correctly in VLC and WebRTC clients, but Home Assistant's native stream player ignores this metadata, causing upside-down video.
 
-**For correct video orientation**, use one of these options:
+**For correct live stream orientation**, use one of these options:
+
 1. **WebRTC Card** (recommended): Install a WebRTC custom card like [WebRTC Camera](https://github.com/AlexxIT/WebRTC)
-2. **go2rtc**: Configure go2rtc to proxy the RTSP stream (automatically handles rotation)
+   - Respects RTSP rotation metadata
+   - Lower latency than HA's native player
+   - Better mobile support
 
-Example go2rtc configuration:
-```yaml
-go2rtc:
-  streams:
-    dashie_camera:
-      - rtsp://[device-ip]:8554/
-```
+2. **go2rtc with rotation** (for HA native player): Configure go2rtc to transcode with physical rotation
+   ```yaml
+   go2rtc:
+     streams:
+       dashie_camera:
+         - rtsp://[device-ip]:8554/
+         - "ffmpeg:dashie_camera#video=h264#hardware#rotate=180"
+   ```
+   Then use `rtsp://localhost:8554/dashie_camera` as your camera source.
+
+3. **Fix at source** (advanced): Modify the Android app's RTSP encoder rotation settings
 
 ## Services
 
