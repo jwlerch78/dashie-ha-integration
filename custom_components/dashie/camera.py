@@ -103,7 +103,14 @@ class DashieCamera(DashieEntity, Camera):
             return self._last_image
 
     async def stream_source(self) -> str | None:
-        """Return the stream source URL."""
+        """Return the stream source URL.
+
+        Note: The RTSP stream uses rotation metadata tags which work correctly
+        in VLC and WebRTC clients, but Home Assistant's native stream integration
+        doesn't handle rotation metadata properly. The stream may appear upside down
+        in HA's native player. For correct rotation, use a WebRTC card or configure
+        go2rtc (see integration README for details).
+        """
         # First check if we have a cached URL from coordinator polling
         if self._stream_url:
             return self._stream_url

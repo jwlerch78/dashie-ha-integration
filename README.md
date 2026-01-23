@@ -64,6 +64,20 @@ Each Dashie Lite device creates the following entities:
 |--------|-------------|
 | `camera.{device}` | Live camera stream |
 
+**Note about camera rotation**: The RTSP stream uses rotation metadata tags that work correctly in VLC and WebRTC clients. However, Home Assistant's native stream player doesn't handle rotation metadata properly, so the video may appear upside down.
+
+**For correct video orientation**, use one of these options:
+1. **WebRTC Card** (recommended): Install a WebRTC custom card like [WebRTC Camera](https://github.com/AlexxIT/WebRTC)
+2. **go2rtc**: Configure go2rtc to proxy the RTSP stream (automatically handles rotation)
+
+Example go2rtc configuration:
+```yaml
+go2rtc:
+  streams:
+    dashie_camera:
+      - rtsp://[device-ip]:8554/
+```
+
 ## Services
 
 ### `dashie.send_command`
