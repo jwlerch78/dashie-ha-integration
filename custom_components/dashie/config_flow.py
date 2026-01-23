@@ -304,18 +304,19 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # If password changed, validate it by testing connection
+            # Get new values
             new_password = user_input.get(CONF_PASSWORD, "")
+            new_port = user_input.get(CONF_PORT, DEFAULT_PORT)
             current_password = self.config_entry.data.get(CONF_PASSWORD, "")
+            current_port = self.config_entry.data.get(CONF_PORT, DEFAULT_PORT)
 
-            if new_password != current_password:
-                # Test the new password
+            # If password or port changed, validate by testing connection
+            if new_password != current_password or new_port != current_port:
                 host = self.config_entry.data.get(CONF_HOST)
-                port = self.config_entry.data.get(CONF_PORT, DEFAULT_PORT)
 
                 try:
                     async with aiohttp.ClientSession() as session:
-                        url = f"http://{host}:{port}/?cmd=deviceInfo&type=json"
+                        url = f"http://{host}:{new_port}/?cmd=deviceInfo&type=json"
                         if new_password:
                             url += f"&password={new_password}"
 
@@ -340,9 +341,9 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
                     errors["base"] = "cannot_connect"
 
             if not errors:
-                # Update the config entry data with new password if changed
-                if new_password != current_password:
-                    new_data = {**self.config_entry.data, CONF_PASSWORD: new_password}
+                # Update the config entry data with new password/port if changed
+                if new_password != current_password or new_port != current_port:
+                    new_data = {**self.config_entry.data, CONF_PASSWORD: new_password, CONF_PORT: new_port}
                     self.hass.config_entries.async_update_entry(
                         self.config_entry, data=new_data
                     )
@@ -359,11 +360,16 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
             DEFAULT_MEDIA_FOLDER
         )
         current_password = self.config_entry.data.get(CONF_PASSWORD, "")
+        current_port = self.config_entry.data.get(CONF_PORT, DEFAULT_PORT)
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(
+                        CONF_PORT,
+                        default=current_port
+                    ): int,
                     vol.Optional(
                         CONF_PASSWORD,
                         default=current_password

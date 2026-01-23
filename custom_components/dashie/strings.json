@@ -5,10 +5,12 @@
         "title": "Dashie Options",
         "description": "Configure settings for **{device_name}**.",
         "data": {
+          "port": "API Port",
           "password": "API Password",
           "media_folder": "Media Folder"
         },
         "data_description": {
+          "port": "Port configured in Dashie Lite sidebar > API Settings (default: 2323)",
           "password": "Password set in Dashie Lite sidebar settings (leave empty for no password)",
           "media_folder": "Use '.' for root media folder, or specify a subfolder name (e.g., 'family-photos')"
         }
