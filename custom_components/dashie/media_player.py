@@ -52,7 +52,6 @@ class DashieMediaPlayer(DashieEntity, MediaPlayerEntity):
         | MediaPlayerEntityFeature.STOP
         | MediaPlayerEntityFeature.VOLUME_SET
         | MediaPlayerEntityFeature.VOLUME_STEP
-        | MediaPlayerEntityFeature.ANNOUNCE
     )
 
     def __init__(
