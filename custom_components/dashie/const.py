@@ -53,10 +53,13 @@ API_CLEAR_PIN = "clearPin"
 
 # Audio
 API_SET_VOLUME = "setAudioVolume"
+API_MUTE_AUDIO = "muteAudio"
+API_UNMUTE_AUDIO = "unmuteAudio"
 API_PLAY_SOUND = "playSound"
 API_STOP_SOUND = "stopSound"
 API_PAUSE_SOUND = "pauseSound"
 API_RESUME_SOUND = "resumeSound"
+API_SEEK_SOUND = "seekSound"
 API_TEXT_TO_SPEECH = "textToSpeech"
 API_STOP_TEXT_TO_SPEECH = "stopTextToSpeech"
 
