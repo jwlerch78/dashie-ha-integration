@@ -20,6 +20,8 @@ from .const import (
     API_SET_VOLUME,
     API_PLAY_SOUND,
     API_STOP_SOUND,
+    API_PAUSE_SOUND,
+    API_RESUME_SOUND,
     API_TEXT_TO_SPEECH,
     API_STOP_TEXT_TO_SPEECH,
 )
@@ -49,6 +51,8 @@ class DashieMediaPlayer(DashieEntity, MediaPlayerEntity):
     # Supported features
     _attr_supported_features = (
         MediaPlayerEntityFeature.PLAY_MEDIA
+        | MediaPlayerEntityFeature.PLAY
+        | MediaPlayerEntityFeature.PAUSE
         | MediaPlayerEntityFeature.STOP
         | MediaPlayerEntityFeature.VOLUME_SET
         | MediaPlayerEntityFeature.VOLUME_STEP
@@ -63,6 +67,7 @@ class DashieMediaPlayer(DashieEntity, MediaPlayerEntity):
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_media_player"
         self._is_playing = False
+        self._is_paused = False
         self._media_title: str | None = None
 
     @property
@@ -70,6 +75,8 @@ class DashieMediaPlayer(DashieEntity, MediaPlayerEntity):
         """Return the state of the media player."""
         if not self.coordinator.last_update_success:
             return MediaPlayerState.UNAVAILABLE
+        if self._is_paused:
+            return MediaPlayerState.PAUSED
         if self._is_playing:
             return MediaPlayerState.PLAYING
         return MediaPlayerState.IDLE
@@ -161,5 +168,20 @@ class DashieMediaPlayer(DashieEntity, MediaPlayerEntity):
         await self.coordinator.send_command(API_STOP_SOUND)
         await self.coordinator.send_command(API_STOP_TEXT_TO_SPEECH)
         self._is_playing = False
+        self._is_paused = False
         self._media_title = None
+        self.async_write_ha_state()
+
+    async def async_media_pause(self) -> None:
+        """Pause the media player."""
+        await self.coordinator.send_command(API_PAUSE_SOUND)
+        self._is_paused = True
+        self._is_playing = False
+        self.async_write_ha_state()
+
+    async def async_media_play(self) -> None:
+        """Resume the media player."""
+        await self.coordinator.send_command(API_RESUME_SOUND)
+        self._is_paused = False
+        self._is_playing = True
         self.async_write_ha_state()
