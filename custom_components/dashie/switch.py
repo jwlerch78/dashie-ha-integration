@@ -28,6 +28,7 @@ from .const import (
     SETTING_START_ON_BOOT,
     SETTING_HIDE_SIDEBAR,
     SETTING_HIDE_HEADER,
+    SETTING_RTSP_ENABLED,
     SETTING_RTSP_SOFTWARE_ENCODING,
 )
 from .coordinator import DashieCoordinator
@@ -485,18 +486,20 @@ class DashieRtspStreamSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start RTSP streaming."""
-        success = await self.coordinator.send_command(API_START_RTSP_STREAM)
-        if success:
-            # Optimistic update for immediate UI feedback
-            self.coordinator.update_local_data(rtspEnabled=True)
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="true"
+        )
+        self.coordinator.update_local_data(rtspEnabled=True)
+        await self.coordinator.send_command(API_START_RTSP_STREAM)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop RTSP streaming."""
-        success = await self.coordinator.send_command(API_STOP_RTSP_STREAM)
-        if success:
-            # Optimistic update for immediate UI feedback
-            self.coordinator.update_local_data(rtspEnabled=False)
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="false"
+        )
+        await self.coordinator.send_command(API_STOP_RTSP_STREAM)
+        self.coordinator.update_local_data(rtspEnabled=False)
         await self.coordinator.async_request_refresh()
 
 
