@@ -109,7 +109,7 @@ class DashieScreensaverPhotoFolderSelect(DashieEntity, SelectEntity):
     async def _update_folder_options(self) -> None:
         """Fetch available folders from HA Media and update options."""
         try:
-            media_dir = _get_media_base_path(self._hass)
+            media_dir = await self._hass.async_add_executor_job(_get_media_base_path, self._hass)
             if media_dir.exists():
                 folders = await self._hass.async_add_executor_job(_list_media_folders, media_dir)
                 self._cached_folders = folders
