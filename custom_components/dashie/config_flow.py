@@ -282,20 +282,15 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return data
 
     @staticmethod
-    @config_entries.HANDLERS.register(DOMAIN)
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Get the options flow for this handler."""
-        return DashieOptionsFlow(config_entry)
+        return DashieOptionsFlow()
 
 
 class DashieOptionsFlow(config_entries.OptionsFlow):
     """Handle Dashie options."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
