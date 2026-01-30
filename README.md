@@ -36,6 +36,12 @@ Once installed, Dashie Lite devices on your network will be automatically discov
 - Device must be on the same network as Home Assistant
 - Fully Kiosk API must be enabled in Dashie Lite settings
 
+### SSDP Discovery Not Working?
+
+If devices aren't being discovered automatically, see the [SSDP Troubleshooting Guide](docs/SSDP_TROUBLESHOOTING.md).
+
+You can also manually add devices via **Settings > Devices & Services > Add Integration > Dashie**.
+
 ## Entities
 
 Each Dashie Lite device creates the following entities:

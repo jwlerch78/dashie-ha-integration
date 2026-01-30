@@ -40,6 +40,11 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_ssdp(self, discovery_info: ssdp.SsdpServiceInfo) -> FlowResult:
         """Handle SSDP discovery."""
+        _LOGGER.warning("🔍 SSDP discovery received!")
+        _LOGGER.warning("  Location: %s", discovery_info.ssdp_location)
+        _LOGGER.warning("  ST: %s", discovery_info.ssdp_st)
+        _LOGGER.warning("  USN: %s", discovery_info.ssdp_usn)
+        _LOGGER.warning("  Headers: %s", discovery_info.ssdp_headers)
         _LOGGER.debug("SSDP discovery received: %s", discovery_info)
 
         # Parse location URL to get host and port
