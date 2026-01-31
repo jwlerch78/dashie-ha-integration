@@ -9,7 +9,7 @@ from typing import Any
 import aiohttp
 from PIL import Image
 
-from homeassistant.components.camera import Camera, CameraEntityFeature
+from homeassistant.components.camera import Camera, CameraEntityFeature, StreamType
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -50,6 +50,7 @@ class DashieCamera(DashieEntity, Camera):
     _attr_supported_features = CameraEntityFeature.STREAM
     _attr_translation_key = "camera"
     _attr_frame_interval = 10  # Seconds between thumbnail updates
+    _attr_frontend_stream_type = StreamType.HLS  # Use HA stream component for HLS
 
     def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
         """Initialize the camera."""
