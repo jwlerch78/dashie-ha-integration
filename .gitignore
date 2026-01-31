@@ -22,3 +22,9 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Camera Card (feature/camera-card branch only)
+www/dashie-camera-card/node_modules/
+www/dashie-camera-card/dist/*.js.map
+www/dashie-camera-card/.tsbuildinfo
+www/dashie-camera-card/package-lock.json
