@@ -1,13 +1,14 @@
 /**
  * HLS Player
- * Uses native HLS support (iOS, Android) or HLS.js (browsers)
+ * Uses HLS.js (preferred) or native HLS support (iOS/Safari fallback)
  */
 
+import Hls from 'hls.js';
 import type { IPlayer } from '../types';
 
 export class HLSPlayer implements IPlayer {
   private video: HTMLVideoElement;
-  private hls: any | null = null;
+  private hls: Hls | null = null;
   private url: string | null = null;
 
   constructor(container: HTMLElement) {
@@ -32,8 +33,19 @@ export class HLSPlayer implements IPlayer {
   async load(url: string): Promise<void> {
     this.url = url;
     console.log('[HLS Player] Loading stream:', url);
+    console.log('[HLS Player] HLS.js supported:', Hls.isSupported());
+    console.log('[HLS Player] Native HLS supported:', this.supportsNativeHLS());
+    console.log('[HLS Player] MSE supported:', 'MediaSource' in window);
+    console.log('[HLS Player] User agent:', navigator.userAgent);
 
-    // Try native HLS support first (iOS, Android)
+    // Use HLS.js if supported (requires MSE)
+    if (Hls.isSupported()) {
+      console.log('[HLS Player] Using HLS.js');
+      this.loadWithHlsJs(url);
+      return;
+    }
+
+    // Fallback to native HLS (Safari/iOS only)
     if (this.supportsNativeHLS()) {
       console.log('[HLS Player] Using native HLS support');
       this.video.src = url;
@@ -41,17 +53,10 @@ export class HLSPlayer implements IPlayer {
       return;
     }
 
-    // Try HLS.js
-    if (window.Hls && window.Hls.isSupported()) {
-      console.log('[HLS Player] Using HLS.js');
-      this.loadWithHlsJs(url);
-      return;
-    }
-
-    // Fallback: try direct playback anyway
-    console.warn('[HLS Player] No HLS support detected, trying direct playback');
-    this.video.src = url;
-    await this.play();
+    // No HLS support at all
+    const errorMsg = 'HLS not supported on this device (MSE: ' + ('MediaSource' in window) + ')';
+    console.error('[HLS Player]', errorMsg);
+    throw new Error(errorMsg);
   }
 
   private supportsNativeHLS(): boolean {
@@ -63,34 +68,39 @@ export class HLSPlayer implements IPlayer {
       this.hls.destroy();
     }
 
-    this.hls = new window.Hls({
-      enableWorker: true,
-      lowLatencyMode: true,
-      backBufferLength: 90,
+    this.hls = new Hls({
+      enableWorker: false,    // Disable workers for better WebView compatibility
+      lowLatencyMode: false,  // Disable for live streams - prioritize stability
+      backBufferLength: 30,   // Keep less history for live
+      maxBufferLength: 10,    // Buffer ahead for smoother playback
+      maxMaxBufferLength: 30,
+      liveSyncDurationCount: 3,  // Stay 3 segments behind live edge
+      liveMaxLatencyDurationCount: 6,
+      liveDurationInfinity: true,
     });
 
     this.hls.loadSource(url);
     this.hls.attachMedia(this.video);
 
-    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+    this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
       console.log('[HLS Player] Manifest parsed, starting playback');
       this.play().catch((e) => {
         console.error('[HLS Player] Autoplay failed:', e);
       });
     });
 
-    this.hls.on(window.Hls.Events.ERROR, (event: string, data: any) => {
+    this.hls.on(Hls.Events.ERROR, (_event: string, data: any) => {
       console.error('[HLS Player] HLS.js error:', data);
 
       if (data.fatal) {
         switch (data.type) {
-          case window.Hls.ErrorTypes.NETWORK_ERROR:
+          case Hls.ErrorTypes.NETWORK_ERROR:
             console.error('[HLS Player] Fatal network error, trying to recover');
-            this.hls.startLoad();
+            this.hls?.startLoad();
             break;
-          case window.Hls.ErrorTypes.MEDIA_ERROR:
+          case Hls.ErrorTypes.MEDIA_ERROR:
             console.error('[HLS Player] Fatal media error, trying to recover');
-            this.hls.recoverMediaError();
+            this.hls?.recoverMediaError();
             break;
           default:
             console.error('[HLS Player] Unrecoverable error, destroying HLS instance');

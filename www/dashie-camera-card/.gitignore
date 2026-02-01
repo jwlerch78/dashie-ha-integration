@@ -1,9 +1,11 @@
 # Dependencies
 node_modules/
 
-# Build output
-dist/
-*.js.map
+# Build output (keep main bundle, ignore source maps and type defs)
+dist/*.js.map
+dist/*.d.ts
+dist/*.d.ts.map
+dist/players/
 
 # TypeScript
 *.tsbuildinfo

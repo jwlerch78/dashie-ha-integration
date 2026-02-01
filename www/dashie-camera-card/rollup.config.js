@@ -9,7 +9,7 @@ export default {
   input: 'src/dashie-camera-card.ts',
   output: {
     file: 'dist/dashie-camera-card.js',
-    format: 'es',
+    format: 'es',  // ES module format for Home Assistant
     sourcemap: !production,
   },
   plugins: [

@@ -24,7 +24,7 @@ export interface HassEntity {
 // Card configuration
 export interface DashieCameraCardConfig {
   type: string;
-  entity: string;
+  entity?: string;  // Optional if stream_name is provided
   title?: string;
 
   // Stream configuration
@@ -110,6 +110,17 @@ export interface DashieDeviceBridge {
   getSystemMetrics: () => Promise<DeviceMetrics>;
   getVideoCodecSupport: () => Promise<string[]>;
   getHardwareDecoderCount: () => Promise<number>;
+
+  // Native RTSP player methods (for Dashie Kiosk WebView)
+  isNativeRtspSupported?: () => boolean;
+  startRtspStream?: (id: string, rtspUrl: string, x: number, y: number, width: number, height: number) => void;
+  updateRtspStreamPosition?: (id: string, x: number, y: number, width: number, height: number) => void;
+  stopRtspStream?: (id: string) => void;
+  stopAllRtspStreams?: () => void;
+  hideRtspOverlays?: () => void;
+  showRtspOverlays?: () => void;
+  isRtspStreamPlaying?: (id: string) => boolean;
+  getActiveRtspStreamCount?: () => number;
 }
 
 // Extend window interface

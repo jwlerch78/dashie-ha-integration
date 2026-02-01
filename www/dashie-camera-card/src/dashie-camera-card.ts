@@ -14,8 +14,8 @@ import type {
 import { PlatformDetector } from './platform-detector';
 import { HLSPlayer } from './players/hls-player';
 import { WebRTCPlayer } from './players/webrtc-player';
+import { NativeRtspPlayer } from './players/native-rtsp-player';
 
-@customElement('dashie-camera-card')
 export class DashieCameraCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @state() private config!: DashieCameraCardConfig;
@@ -151,8 +151,9 @@ export class DashieCameraCard extends LitElement {
   `;
 
   setConfig(config: DashieCameraCardConfig): void {
-    if (!config.entity) {
-      throw new Error('You need to define an entity');
+    // Either entity or stream_name is required
+    if (!config.entity && !config.stream_name) {
+      throw new Error('You need to define either an entity or stream_name');
     }
 
     this.config = {
@@ -188,10 +189,10 @@ export class DashieCameraCard extends LitElement {
       this.loading = true;
       this.error = null;
 
-      const streamUrl = await this.getStreamUrl();
-      console.log('[Dashie Camera Card] Stream URL:', streamUrl);
+      const streamConfig = await this.getStreamConfig();
+      console.log('[Dashie Camera Card] Stream config:', streamConfig);
 
-      await this.createPlayer(streamUrl);
+      await this.createPlayer(streamConfig.url, streamConfig.playerType);
 
       this.loading = false;
     } catch (error) {
@@ -201,50 +202,85 @@ export class DashieCameraCard extends LitElement {
     }
   }
 
-  private async getStreamUrl(): Promise<string> {
-    const entity = this.hass.states[this.config.entity];
-    if (!entity) {
+  /**
+   * Get the stream URL based on platform and protocol.
+   * Returns { url, playerType } to indicate which player to use.
+   */
+  private async getStreamConfig(): Promise<{ url: string; playerType: 'native-rtsp' | 'webrtc' | 'hls' }> {
+    // Entity is optional if stream_name is provided
+    const entity = this.config.entity ? this.hass.states[this.config.entity] : null;
+
+    // If entity is specified but not found, that's an error
+    if (this.config.entity && !entity) {
       throw new Error(`Entity not found: ${this.config.entity}`);
     }
 
-    // Check if it's a Frigate camera
-    const frigateUrl = this.config.frigate?.url || entity.attributes.frigate_url;
+    // Check if it's a Frigate camera (only if entity exists)
+    const frigateUrl = this.config.frigate?.url || entity?.attributes?.frigate_url;
 
-    // Determine protocol based on platform
-    const protocol = this.config.protocol !== 'auto'
-      ? this.config.protocol
-      : this.platform === 'dashie-tablet'
-      ? 'hls'
-      : 'webrtc';
+    // Get stream name (from config, or from entity ID without domain)
+    const streamName = this.config.stream_name ||
+      (this.config.entity ? this.config.entity.replace('camera.', '') : null);
+
+    if (!streamName) {
+      throw new Error('Could not determine stream name');
+    }
+
+    // Check if native RTSP is supported (Dashie Kiosk WebView)
+    const nativeRtspSupported = NativeRtspPlayer.isSupported();
+    console.log('[Dashie Camera Card] Native RTSP supported:', nativeRtspSupported);
+    console.log('[Dashie Camera Card] Config protocol:', this.config.protocol);
+
+    // Determine if we need to use HA's go2rtc proxy (remote access over HTTPS)
+    const isRemoteAccess = window.location.protocol === 'https:';
+    const useHaProxy = isRemoteAccess && !this.config.go2rtc_url;
+
+    console.log('[Dashie Camera Card] Remote access:', isRemoteAccess, 'Use HA proxy:', useHaProxy);
+
+    // For remote access, use HA's go2rtc proxy at /api/go2rtc/
+    // For local access, use direct go2rtc connection
+    let go2rtcUrl: string;
+    if (useHaProxy) {
+      // HA proxies go2rtc at /api/go2rtc/ (requires WebRTC Camera integration)
+      go2rtcUrl = '/api/go2rtc';
+      console.log('[Dashie Camera Card] Using HA go2rtc proxy');
+    } else {
+      go2rtcUrl = this.config.go2rtc_url || frigateUrl?.replace(':5000', ':1984') || 'http://192.168.86.46:1984';
+      console.log('[Dashie Camera Card] Using direct go2rtc:', go2rtcUrl);
+    }
+
+    // Native RTSP for Dashie WebView (no WebRTC handshaking overhead)
+    // Only use if explicitly supported AND protocol is not forced to something else
+    // Note: Native RTSP only works on local network, not through HA proxy
+    if (nativeRtspSupported && !useHaProxy && this.config.protocol !== 'webrtc' && this.config.protocol !== 'hls') {
+      // Use go2rtc's RTSP output (standard port 8554)
+      const rtspUrl = `rtsp://${new URL(go2rtcUrl).hostname}:8554/${streamName}`;
+      console.log('[Dashie Camera Card] Using native RTSP:', rtspUrl);
+      return { url: rtspUrl, playerType: 'native-rtsp' };
+    }
+
+    // For browsers (and non-RTSP cases), default to WebRTC
+    // HLS is only used if EXPLICITLY requested via protocol: 'hls'
+    const protocol = this.config.protocol === 'hls' ? 'hls' : 'webrtc';
 
     console.log('[Dashie Camera Card] Selected protocol:', protocol);
 
-    // Get stream name (defaults to entity ID without domain)
-    const streamName = this.config.stream_name || this.config.entity.replace('camera.', '');
-
-    // Build stream URL
     if (protocol === 'hls') {
-      // HLS via go2rtc
-      const go2rtcUrl = this.config.go2rtc_url || frigateUrl?.replace(':5000', ':1984') || 'http://localhost:1984';
-      return `${go2rtcUrl}/api/stream.m3u8?src=${streamName}`;
+      return {
+        url: `${go2rtcUrl}/api/stream.m3u8?src=${streamName}`,
+        playerType: 'hls'
+      };
     }
 
-    if (protocol === 'webrtc') {
-      // WebRTC via go2rtc or Frigate
-      const baseUrl = frigateUrl || this.config.go2rtc_url || 'http://localhost:1984';
-      return `${baseUrl}/api/webrtc?src=${streamName}`;
-    }
-
-    // RTSP (direct)
-    const rtspUrl = entity.attributes.rtsp_url;
-    if (rtspUrl) {
-      return rtspUrl;
-    }
-
-    throw new Error('Could not determine stream URL');
+    // WebRTC for browsers (default)
+    return {
+      url: `${go2rtcUrl}/api/webrtc?src=${streamName}`,
+      playerType: 'webrtc'
+    };
   }
 
-  private async createPlayer(url: string): Promise<void> {
+
+  private async createPlayer(url: string, playerType: 'native-rtsp' | 'webrtc' | 'hls'): Promise<void> {
     // Destroy existing player
     this.destroyPlayer();
 
@@ -253,15 +289,22 @@ export class DashieCameraCard extends LitElement {
       throw new Error('Video container not found');
     }
 
-    // Determine player type
-    const protocol = url.includes('.m3u8') ? 'hls' : 'webrtc';
+    console.log('[Dashie Camera Card] Creating player:', playerType);
 
-    console.log('[Dashie Camera Card] Creating player:', protocol);
-
-    if (protocol === 'hls') {
-      this.player = new HLSPlayer(container);
-    } else {
-      this.player = new WebRTCPlayer(container, this.hass);
+    switch (playerType) {
+      case 'native-rtsp':
+        // Native RTSP via Android's ExoPlayer (Dashie WebView only)
+        this.player = new NativeRtspPlayer(container);
+        break;
+      case 'hls':
+        // HLS via HLS.js (browser fallback)
+        this.player = new HLSPlayer(container);
+        break;
+      case 'webrtc':
+      default:
+        // WebRTC for browsers (go2rtc signaling)
+        this.player = new WebRTCPlayer(container);
+        break;
     }
 
     // Add error listener
@@ -293,7 +336,7 @@ export class DashieCameraCard extends LitElement {
         this.openMaximized();
         break;
       case 'fullscreen':
-        this.requestFullscreen();
+        this.enterFullscreen();
         break;
       case 'more-info':
         this.showMoreInfo();
@@ -311,14 +354,18 @@ export class DashieCameraCard extends LitElement {
     this.maximized = false;
   }
 
-  private requestFullscreen(): void {
+  private enterFullscreen(): void {
     const container = this.shadowRoot?.querySelector('.video-container');
     if (container && 'requestFullscreen' in container) {
-      (container as any).requestFullscreen();
+      (container as HTMLElement).requestFullscreen();
     }
   }
 
   private showMoreInfo(): void {
+    if (!this.config.entity) {
+      console.warn('[Dashie Camera Card] Cannot show more-info: no entity configured');
+      return;
+    }
     const event = new CustomEvent('hass-more-info', {
       bubbles: true,
       composed: true,
@@ -395,13 +442,30 @@ export class DashieCameraCard extends LitElement {
   }
 }
 
-// Register the card
+// Explicitly define the custom element with error handling
+console.log('[Dashie Camera Card] Registering custom element...');
+try {
+  if (!customElements.get('dashie-camera-card')) {
+    customElements.define('dashie-camera-card', DashieCameraCard);
+    console.log('[Dashie Camera Card] Element defined successfully');
+
+    // Verify registration worked
+    const registered = customElements.get('dashie-camera-card');
+    console.log('[Dashie Camera Card] Verification:', registered ? 'FOUND' : 'NOT FOUND');
+  } else {
+    console.log('[Dashie Camera Card] Element already registered');
+  }
+} catch (error) {
+  console.error('[Dashie Camera Card] Failed to define element:', error);
+}
+
+// Register the card in HA's card picker
 (window as any).customCards = (window as any).customCards || [];
 (window as any).customCards.push({
-  type: 'dashie-camera',
+  type: 'dashie-camera-card',
   name: 'Dashie Camera',
   description: 'Adaptive camera card with platform-aware streaming',
   preview: false,
 });
 
-console.log('[Dashie Camera Card] Custom card registered');
+console.log('[Dashie Camera Card] Card registration complete');
