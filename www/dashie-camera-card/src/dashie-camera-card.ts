@@ -282,13 +282,15 @@ export class DashieCameraCard extends LitElement {
     // Check if it's a Frigate camera (only if entity exists)
     const frigateUrl = this.config.frigate?.url || entity?.attributes?.frigate_url;
 
-    // Get stream name (from config, or from entity ID without domain)
-    const streamName = this.config.stream_name ||
-      (this.config.entity ? this.config.entity.replace('camera.', '') : null);
+    // Get stream name (from config, or from entity ID)
+    // HA's go2rtc uses the FULL entity ID as stream name (including camera. prefix)
+    const streamName = this.config.stream_name || this.config.entity;
 
     if (!streamName) {
-      throw new Error('Could not determine stream name');
+      throw new Error('Could not determine stream name - specify entity or stream_name');
     }
+
+    console.log('[Dashie Camera Card] Stream name:', streamName);
 
     // Check if native RTSP is supported (Dashie Kiosk WebView)
     const nativeRtspSupported = NativeRtspPlayer.isSupported();
