@@ -169,16 +169,80 @@ export class DashieCameraCard extends LitElement {
     console.log('[Dashie Camera Card] Config set:', this.config);
   }
 
+  // Visibility tracking for memory optimization
+  private intersectionObserver: IntersectionObserver | null = null;
+  private isVisible = true;
+  private wasPlaying = false;
+
   connectedCallback(): void {
     super.connectedCallback();
     this.platform = PlatformDetector.detectPlatform();
     console.log('[Dashie Camera Card] Platform detected:', this.platform);
+
+    // Set up visibility tracking - stop streams when card scrolls out of view
+    this.setupVisibilityTracking();
+
+    // Handle page visibility changes (tab switching, etc.)
+    document.addEventListener('visibilitychange', this.handlePageVisibility);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+
+    // Clean up visibility tracking
+    if (this.intersectionObserver) {
+      this.intersectionObserver.disconnect();
+      this.intersectionObserver = null;
+    }
+    document.removeEventListener('visibilitychange', this.handlePageVisibility);
+
     this.destroyPlayer();
   }
+
+  /**
+   * Stop streams when card scrolls out of view to save memory and bandwidth.
+   */
+  private setupVisibilityTracking(): void {
+    if (!('IntersectionObserver' in window)) return;
+
+    this.intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+
+        const wasVisible = this.isVisible;
+        this.isVisible = entry.isIntersecting;
+
+        if (wasVisible && !this.isVisible) {
+          // Card scrolled out of view - stop stream to free memory
+          console.log('[Dashie Camera Card] Card hidden, stopping stream');
+          this.wasPlaying = !!this.player;
+          this.player?.stop();
+        } else if (!wasVisible && this.isVisible && this.wasPlaying) {
+          // Card scrolled back into view - restart stream
+          console.log('[Dashie Camera Card] Card visible, restarting stream');
+          this.initializeStream();
+        }
+      },
+      { threshold: 0.1 } // Trigger when 10% visible
+    );
+
+    this.intersectionObserver.observe(this);
+  }
+
+  /**
+   * Handle page visibility changes (tab switching, screen off, etc.)
+   */
+  private handlePageVisibility = (): void => {
+    if (document.hidden) {
+      console.log('[Dashie Camera Card] Page hidden, stopping stream');
+      this.wasPlaying = !!this.player;
+      this.player?.stop();
+    } else if (this.wasPlaying && this.isVisible) {
+      console.log('[Dashie Camera Card] Page visible, restarting stream');
+      this.initializeStream();
+    }
+  };
 
   protected firstUpdated(): void {
     this.initializeStream();
