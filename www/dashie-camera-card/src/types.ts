@@ -6,7 +6,7 @@
 export interface HomeAssistant {
   states: { [entity_id: string]: HassEntity };
   callService: (domain: string, service: string, data?: any) => Promise<any>;
-  callWS: (msg: any) => Promise<any>;
+  callWS: <T = any>(msg: any) => Promise<T>;
   connection: any;
   language: string;
   config: any;

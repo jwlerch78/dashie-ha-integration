@@ -231,35 +231,33 @@ export class DashieCameraCard extends LitElement {
     console.log('[Dashie Camera Card] Native RTSP supported:', nativeRtspSupported);
     console.log('[Dashie Camera Card] Config protocol:', this.config.protocol);
 
-    // Determine if we need to use HA's go2rtc proxy (remote access over HTTPS)
+    // Determine if we need to use HA's proxy (remote access over HTTPS)
     const isRemoteAccess = window.location.protocol === 'https:';
-    const useHaProxy = isRemoteAccess && !this.config.go2rtc_url;
+    const hasExplicitGo2rtcUrl = !!this.config.go2rtc_url;
 
-    console.log('[Dashie Camera Card] Remote access:', isRemoteAccess, 'Use HA proxy:', useHaProxy);
+    console.log('[Dashie Camera Card] Remote access:', isRemoteAccess, 'Has explicit go2rtc_url:', hasExplicitGo2rtcUrl);
 
-    // For remote access, use HA's go2rtc proxy at /api/go2rtc/
-    // For local access, use direct go2rtc connection
-    let go2rtcUrl: string;
-    if (useHaProxy) {
-      // HA proxies go2rtc at /api/go2rtc/ (requires WebRTC Camera integration)
-      go2rtcUrl = '/api/go2rtc';
-      console.log('[Dashie Camera Card] Using HA go2rtc proxy');
-    } else {
-      go2rtcUrl = this.config.go2rtc_url || frigateUrl?.replace(':5000', ':1984') || 'http://192.168.86.46:1984';
-      console.log('[Dashie Camera Card] Using direct go2rtc:', go2rtcUrl);
+    // For remote access WITHOUT explicit go2rtc_url, use HA's camera stream API
+    // This provides an HLS URL that works through HA's authentication proxy
+    if (isRemoteAccess && !hasExplicitGo2rtcUrl && this.config.entity) {
+      console.log('[Dashie Camera Card] Using HA camera stream API for remote access');
+      return await this.getHaCameraStream();
     }
+
+    // For local access or when explicit go2rtc_url is provided
+    const go2rtcUrl = this.config.go2rtc_url || frigateUrl?.replace(':5000', ':1984') || 'http://192.168.86.46:1984';
+    console.log('[Dashie Camera Card] Using direct go2rtc:', go2rtcUrl);
 
     // Native RTSP for Dashie WebView (no WebRTC handshaking overhead)
     // Only use if explicitly supported AND protocol is not forced to something else
-    // Note: Native RTSP only works on local network, not through HA proxy
-    if (nativeRtspSupported && !useHaProxy && this.config.protocol !== 'webrtc' && this.config.protocol !== 'hls') {
+    if (nativeRtspSupported && this.config.protocol !== 'webrtc' && this.config.protocol !== 'hls') {
       // Use go2rtc's RTSP output (standard port 8554)
       const rtspUrl = `rtsp://${new URL(go2rtcUrl).hostname}:8554/${streamName}`;
       console.log('[Dashie Camera Card] Using native RTSP:', rtspUrl);
       return { url: rtspUrl, playerType: 'native-rtsp' };
     }
 
-    // For browsers (and non-RTSP cases), default to WebRTC
+    // For browsers, default to WebRTC (fastest for local network)
     // HLS is only used if EXPLICITLY requested via protocol: 'hls'
     const protocol = this.config.protocol === 'hls' ? 'hls' : 'webrtc';
 
@@ -277,6 +275,49 @@ export class DashieCameraCard extends LitElement {
       url: `${go2rtcUrl}/api/webrtc?src=${streamName}`,
       playerType: 'webrtc'
     };
+  }
+
+  /**
+   * Get camera stream URL via HA's WebSocket API.
+   * This works through HA's authentication proxy, enabling remote access.
+   */
+  private async getHaCameraStream(): Promise<{ url: string; playerType: 'hls' }> {
+    if (!this.config.entity) {
+      throw new Error('Entity required for HA camera stream');
+    }
+
+    console.log('[Dashie Camera Card] Requesting HA camera stream for:', this.config.entity);
+
+    try {
+      // Use HA's WebSocket API to request a camera stream
+      // This returns an HLS URL that works through HA's auth proxy
+      const result = await this.hass.callWS<{ url: string }>({
+        type: 'camera/stream',
+        entity_id: this.config.entity,
+        format: 'hls',
+      });
+
+      console.log('[Dashie Camera Card] HA camera stream result:', result);
+
+      if (!result?.url) {
+        throw new Error('No stream URL returned from HA');
+      }
+
+      return {
+        url: result.url,
+        playerType: 'hls',
+      };
+    } catch (error) {
+      console.error('[Dashie Camera Card] Failed to get HA camera stream:', error);
+
+      // Provide helpful error message
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      if (errorMsg.includes('stream component not loaded')) {
+        throw new Error('Enable "stream" integration in HA for remote camera access');
+      }
+
+      throw new Error(`HA camera stream failed: ${errorMsg}`);
+    }
   }
 
 
