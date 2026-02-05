@@ -24,12 +24,12 @@ export interface HassEntity {
 // Card configuration
 export interface DashieCameraCardConfig {
   type: string;
-  entity?: string;  // Optional if stream_name is provided
+  entity?: string;  // Optional if stream_name or cameras is provided
   title?: string;
 
   // Stream configuration
   quality?: 'auto' | 'high' | 'medium' | 'low' | 'mobile';
-  protocol?: 'auto' | 'webrtc' | 'hls' | 'rtsp';
+  protocol?: 'auto' | 'webrtc' | 'hls' | 'rtsp' | 'mse';
   prefer_codec?: 'auto' | 'h264' | 'h265';
 
   // Interaction
@@ -50,6 +50,23 @@ export interface DashieCameraCardConfig {
   go2rtc_url?: string;
   stream_name?: string;
   show_debug?: boolean;
+
+  // Transcoding options (for tablets with decoder limitations)
+  transcode?: {
+    enabled?: boolean;          // Enable FFmpeg transcoding (default: auto-detect)
+    resolution?: '1080p' | '720p' | '480p' | '360p';  // Target resolution
+    profile?: 'baseline' | 'main' | 'high';  // H.264 profile (baseline is most compatible)
+  };
+
+  // CamGrid mode - display multiple cameras in a composite grid
+  // Uses HA dashie.provision_camgrid service to create go2rtc exec:ffmpeg composite stream
+  camgrid?: {
+    cameras?: string[];         // Array of camera entity IDs (e.g., ['camera.front', 'camera.back'])
+    stream_name?: string;       // Pre-configured go2rtc stream name (e.g., 'dashie_camgrid_2x2')
+    grid?: '2x1' | '2x2' | '3x1' | '1x2' | '1x3';  // Grid layout (auto-detected if not specified)
+    fps?: number;               // Frame rate (default: 10)
+    quality?: number;           // CRF quality 0-51, higher = lower quality (default: 30)
+  };
 }
 
 // Platform types
@@ -146,5 +163,6 @@ export interface LovelaceCardEditor extends HTMLElement {
 
 // Helper types
 export type QualityTier = 'high' | 'medium' | 'low' | 'mobile';
-export type Protocol = 'hls' | 'webrtc' | 'rtsp';
+export type Protocol = 'hls' | 'webrtc' | 'rtsp' | 'mse';
+export type PlayerType = 'native-rtsp' | 'webrtc' | 'hls' | 'mse' | 'mp4';
 export type TapAction = 'maximize' | 'fullscreen' | 'more-info' | 'none';

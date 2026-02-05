@@ -26,6 +26,7 @@ from .const import (
 )
 from .coordinator import DashieCoordinator
 from .media_api import register_media_api_views
+from .go2rtc_helper import detect_go2rtc, provision_camgrid_stream
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +55,9 @@ SERVICE_SHOW_MESSAGE = "show_message"
 SERVICE_START_TIMER = "start_timer"
 SERVICE_PAUSE_TIMER = "pause_timer"
 SERVICE_CANCEL_TIMER = "cancel_timer"
+
+# CamGrid service
+SERVICE_PROVISION_CAMGRID = "provision_camgrid"
 
 # Timer constants
 MAX_TIMERS = 3
@@ -469,6 +473,46 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         await _hide_timer_from_devices(tid, slot_num)
         _LOGGER.info("Cancelled timer %s", label)
 
+    # --- CamGrid Stream Provisioning ---
+    async def async_provision_camgrid(call: ServiceCall) -> dict:
+        """
+        Provision a CamGrid composite stream in go2rtc.
+
+        This service runs from HA (localhost), so it's a trusted producer
+        and can create exec: sources that browsers cannot.
+        """
+        cameras = call.data.get("cameras", [])
+        grid = call.data.get("grid", "auto")
+        fps = call.data.get("fps", 10)
+        quality = call.data.get("quality", 30)
+        go2rtc_url = call.data.get("go2rtc_url")
+
+        if not cameras:
+            _LOGGER.error("cameras is required for provision_camgrid")
+            return {"success": False, "error": "cameras is required"}
+
+        # Auto-detect go2rtc URL if not provided
+        if not go2rtc_url:
+            go2rtc_url = await detect_go2rtc(hass)
+            if not go2rtc_url:
+                _LOGGER.error("go2rtc not found and no go2rtc_url provided")
+                return {"success": False, "error": "go2rtc not found"}
+
+        result = await provision_camgrid_stream(
+            go2rtc_url=go2rtc_url,
+            cameras=cameras,
+            grid=grid,
+            fps=fps,
+            quality=quality,
+        )
+
+        if result.get("success"):
+            _LOGGER.info("Provisioned CamGrid stream: %s", result.get("stream_name"))
+        else:
+            _LOGGER.error("Failed to provision CamGrid: %s", result.get("error"))
+
+        return result
+
     # Register all services
     hass.services.async_register(DOMAIN, SERVICE_SEND_COMMAND, async_send_command)
     hass.services.async_register(DOMAIN, SERVICE_LOAD_URL, async_load_url)
@@ -481,6 +525,14 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_START_TIMER, async_start_timer)
     hass.services.async_register(DOMAIN, SERVICE_PAUSE_TIMER, async_pause_timer)
     hass.services.async_register(DOMAIN, SERVICE_CANCEL_TIMER, async_cancel_timer)
+
+    # CamGrid service
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PROVISION_CAMGRID,
+        async_provision_camgrid,
+        supports_response=True,  # Allow returning data to caller
+    )
 
     _LOGGER.info("Registered Dashie services")
 
@@ -506,6 +558,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_START_TIMER)
         hass.services.async_remove(DOMAIN, SERVICE_PAUSE_TIMER)
         hass.services.async_remove(DOMAIN, SERVICE_CANCEL_TIMER)
+        # CamGrid service
+        hass.services.async_remove(DOMAIN, SERVICE_PROVISION_CAMGRID)
         # Stop timer tick interval
         if "timer_unsub" in hass.data[DOMAIN]:
             hass.data[DOMAIN]["timer_unsub"]()

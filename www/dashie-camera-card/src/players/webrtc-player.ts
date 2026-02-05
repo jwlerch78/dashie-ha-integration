@@ -27,7 +27,9 @@ export class WebRTCPlayer implements IPlayer {
     this.video.muted = true;
     this.video.playsInline = true;
     this.video.style.width = '100%';
-    this.video.style.height = 'auto';
+    this.video.style.height = '100%';
+    this.video.style.minHeight = '200px';
+    this.video.style.objectFit = 'contain';
     this.video.style.display = 'block';
     this.video.style.background = '#000';
 
@@ -66,6 +68,11 @@ export class WebRTCPlayer implements IPlayer {
         this.mediaStream = event.streams[0];
         this.video.srcObject = this.mediaStream;
         console.log('[WebRTC Player] Attached stream to video');
+
+        // Explicitly play - some WebViews don't honor autoplay
+        this.video.play().catch(err => {
+          console.warn('[WebRTC Player] Autoplay blocked:', err.message);
+        });
       }
     };
 

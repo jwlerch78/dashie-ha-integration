@@ -14,6 +14,7 @@ export class MSEPlayer implements IPlayer {
   private sourceBuffer: SourceBuffer | null = null;
   private bufferQueue: ArrayBuffer[] = [];
   private isBufferUpdating = false;
+  private hasInitSegment = false;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -65,7 +66,9 @@ export class MSEPlayer implements IPlayer {
     return new Promise((resolve, reject) => {
       // Create MediaSource
       this.mediaSource = new MediaSource();
-      this.video.src = URL.createObjectURL(this.mediaSource);
+      const blobUrl = URL.createObjectURL(this.mediaSource);
+      this.video.src = blobUrl;
+      console.log('[MSE Player] MediaSource blob URL:', blobUrl);
 
       this.mediaSource.addEventListener('sourceopen', () => {
         console.log('[MSE Player] MediaSource opened');
@@ -119,18 +122,37 @@ export class MSEPlayer implements IPlayer {
       console.log('[MSE Player] Received message:', data);
       try {
         const msg = JSON.parse(data);
-        if (msg.type === 'mse' && msg.codecs) {
-          console.log('[MSE Player] Codecs:', msg.codecs);
-          this.initSourceBuffer(msg.codecs);
+        if (msg.type === 'mse') {
+          // go2rtc sends codecs in different formats:
+          // Option 1: { type: 'mse', codecs: 'avc1.640029' }
+          // Option 2: { type: 'mse', value: 'video/mp4; codecs="avc1.640029"' }
+          let codecs = msg.codecs;
+
+          if (!codecs && msg.value) {
+            // Extract codecs from MIME type string
+            const match = msg.value.match(/codecs="([^"]+)"/);
+            if (match) {
+              codecs = match[1];
+            }
+          }
+
+          if (codecs) {
+            console.log('[MSE Player] Codecs:', codecs);
+            this.initSourceBuffer(codecs);
+          } else {
+            console.error('[MSE Player] No codecs found in message:', msg);
+          }
         }
       } catch (e) {
         // Not JSON, ignore
+        console.error('[MSE Player] Failed to parse message:', e);
       }
       return;
     }
 
     // Handle binary data (video frames)
     if (data instanceof ArrayBuffer) {
+      console.log('[MSE Player] Binary data received:', data.byteLength, 'bytes');
       this.appendBuffer(data);
     }
   }
@@ -146,6 +168,18 @@ export class MSEPlayer implements IPlayer {
       // go2rtc sends codec string like "avc1.640028" or "avc1.640028,mp4a.40.2"
       const mimeType = `video/mp4; codecs="${codecs}"`;
       console.log('[MSE Player] MIME type:', mimeType);
+      console.log('[MSE Player] MediaSource.isTypeSupported:', MediaSource.isTypeSupported(mimeType));
+
+      // Check alternative codec profiles that might be better supported
+      const alternativeCodecs = [
+        'video/mp4; codecs="avc1.42E01E"',  // Baseline Profile Level 3.0
+        'video/mp4; codecs="avc1.4D401F"',  // Main Profile Level 3.1
+        'video/mp4; codecs="avc1.640028"',  // High Profile Level 4.0
+      ];
+      console.log('[MSE Player] Alternative codec support:');
+      alternativeCodecs.forEach(codec => {
+        console.log(`  ${codec}: ${MediaSource.isTypeSupported(codec)}`);
+      });
 
       if (!MediaSource.isTypeSupported(mimeType)) {
         console.error('[MSE Player] MIME type not supported:', mimeType);
@@ -156,13 +190,37 @@ export class MSEPlayer implements IPlayer {
       this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeType);
       this.sourceBuffer.mode = 'segments';
 
+      let playbackStarted = false;
+
       this.sourceBuffer.addEventListener('updateend', () => {
+        console.log('[MSE Player] updateend fired - playbackStarted:', playbackStarted,
+                    'hasInitSegment:', this.hasInitSegment, 'video.paused:', this.video.paused,
+                    'bufferQueue.length:', this.bufferQueue.length);
         this.isBufferUpdating = false;
+
+        // Only start playback after initialization segment is loaded
+        if (!playbackStarted && this.hasInitSegment && this.video.paused) {
+          playbackStarted = true;
+          console.log('[MSE Player] Initialization segment loaded, starting playback');
+          this.video.play().catch(err => {
+            console.error('[MSE Player] Autoplay failed:', err);
+          });
+        } else {
+          console.log('[MSE Player] Skipping playback start - playbackStarted:', playbackStarted,
+                      'hasInitSegment:', this.hasInitSegment, 'paused:', this.video.paused);
+        }
+
         this.processBufferQueue();
       });
 
       this.sourceBuffer.addEventListener('error', (e) => {
         console.error('[MSE Player] SourceBuffer error:', e);
+        console.error('[MSE Player] SourceBuffer error details - readyState:', this.mediaSource?.readyState,
+                      'updating:', this.sourceBuffer?.updating, 'buffered:', this.sourceBuffer?.buffered.length);
+
+        // Log video element state
+        console.error('[MSE Player] Video element - readyState:', this.video.readyState,
+                      'networkState:', this.video.networkState, 'error:', this.video.error);
       });
 
       // Process any queued data
@@ -174,27 +232,60 @@ export class MSEPlayer implements IPlayer {
   }
 
   private appendBuffer(data: ArrayBuffer): void {
-    this.bufferQueue.push(data);
-    this.processBufferQueue();
+    // Detect initialization segment (fMP4 init is typically >10KB and contains ftyp+moov)
+    // Media segments are smaller and contain moof+mdat
+    const isLikelyInitSegment = data.byteLength > 10000;
+
+    if (isLikelyInitSegment && !this.hasInitSegment) {
+      console.log('[MSE Player] Detected initialization segment:', data.byteLength, 'bytes');
+      this.hasInitSegment = true;
+      // Insert init segment at the FRONT of the queue (it must be first)
+      this.bufferQueue.unshift(data);
+    } else {
+      // Media segments go at the end
+      this.bufferQueue.push(data);
+    }
+
+    // IMPORTANT: Only process queue if we have the init segment
+    // Appending media segments before init segment causes MediaSource to close
+    if (this.hasInitSegment) {
+      this.processBufferQueue();
+    } else {
+      console.log('[MSE Player] Queuing data, waiting for init segment. Queue size:', this.bufferQueue.length);
+    }
   }
 
   private processBufferQueue(): void {
     if (!this.sourceBuffer || this.isBufferUpdating || this.bufferQueue.length === 0) {
+      console.log('[MSE Player] processBufferQueue - sourceBuffer:', !!this.sourceBuffer,
+                  'isBufferUpdating:', this.isBufferUpdating, 'queueLength:', this.bufferQueue.length);
       return;
     }
 
     if (this.mediaSource?.readyState !== 'open') {
+      console.log('[MSE Player] MediaSource not open, readyState:', this.mediaSource?.readyState);
       return;
     }
 
     try {
       const data = this.bufferQueue.shift();
       if (data) {
+        console.log('[MSE Player] Appending buffer:', data.byteLength, 'bytes, queue remaining:', this.bufferQueue.length);
+        console.log('[MSE Player] Before append - MediaSource readyState:', this.mediaSource?.readyState,
+                    'SourceBuffer updating:', this.sourceBuffer.updating);
         this.isBufferUpdating = true;
         this.sourceBuffer.appendBuffer(data);
+        console.log('[MSE Player] appendBuffer() called successfully');
       }
     } catch (error) {
       console.error('[MSE Player] Error appending buffer:', error);
+      console.error('[MSE Player] Error details:', {
+        name: error instanceof DOMException ? error.name : 'Unknown',
+        message: error instanceof Error ? error.message : String(error),
+        mediaSourceState: this.mediaSource?.readyState,
+        sourceBufferUpdating: this.sourceBuffer?.updating
+      });
+
       // If buffer is full, remove old data
       if (error instanceof DOMException && error.name === 'QuotaExceededError') {
         this.trimBuffer();
@@ -281,6 +372,7 @@ export class MSEPlayer implements IPlayer {
     this.sourceBuffer = null;
     this.mediaSource = null;
     this.bufferQueue = [];
+    this.hasInitSegment = false;
   }
 
   getElement(): HTMLElement {

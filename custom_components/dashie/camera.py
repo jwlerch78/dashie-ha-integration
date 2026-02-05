@@ -168,6 +168,7 @@ class DashieCamera(DashieEntity, Camera):
         """
         # Use cached URL if available
         if self._stream_url:
+            _LOGGER.debug("stream_source returning cached URL: %s", self._stream_url)
             return self._stream_url
 
         # Try coordinator data (updated every 5s)
@@ -175,6 +176,7 @@ class DashieCamera(DashieEntity, Camera):
             rtsp_status = self.coordinator.data.get("rtsp_status", {})
             if rtsp_status.get("isStreaming") and rtsp_status.get("streamUrl"):
                 self._stream_url = rtsp_status["streamUrl"]
+                _LOGGER.debug("stream_source returning URL from coordinator: %s", self._stream_url)
                 return self._stream_url
 
         # Fallback: fetch directly from device (for immediate response)
@@ -190,10 +192,12 @@ class DashieCamera(DashieEntity, Camera):
                         data = await response.json()
                         if data.get("isStreaming"):
                             self._stream_url = data.get("streamUrl")
+                            _LOGGER.debug("stream_source returning URL from device API: %s", self._stream_url)
                             return self._stream_url
         except Exception as err:
             _LOGGER.debug("Could not get RTSP status: %s", err)
 
+        _LOGGER.debug("stream_source returning None (no stream available)")
         return None
 
     async def async_turn_on(self) -> None:
@@ -205,7 +209,24 @@ class DashieCamera(DashieEntity, Camera):
 
         Does NOT optimistically set _attr_is_streaming — the coordinator poll
         will detect isStreaming=True once the server is ready.
+
+        Also clears HA's internal stream reference to force creation of a fresh
+        stream worker on next access. This fixes issues where HA's stream component
+        gets stuck in an error state after disconnects or HA reboots.
         """
+        # Clear any cached stream to force HA to create a fresh one
+        # This fixes stream component getting stuck after errors or HA reboot
+        if hasattr(self, "_stream") and self._stream is not None:
+            _LOGGER.debug("Clearing cached stream to force fresh connection")
+            try:
+                await self._stream.stop()
+            except Exception:
+                pass
+            self._stream = None
+
+        # Clear cached URL so stream_source() fetches fresh
+        self._stream_url = None
+
         # Persist the preference
         await self.coordinator.send_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="true"
