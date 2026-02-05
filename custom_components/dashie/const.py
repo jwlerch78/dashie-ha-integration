@@ -70,6 +70,7 @@ API_SET_BOOLEAN_SETTING = "setBooleanSetting"  # key, value (true/false)
 # WebView & Cache
 API_CLEAR_CACHE = "clearCache"
 API_CLEAR_WEBSTORAGE = "clearWebstorage"
+API_REFRESH_WEBVIEW = "refreshWebView"
 
 # Camera & RTSP
 API_GET_CAMSHOT = "getCamshot"

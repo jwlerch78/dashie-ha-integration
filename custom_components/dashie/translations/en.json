@@ -59,6 +59,9 @@
       },
       "memory": {
         "name": "Memory Used"
+      },
+      "ram_usage": {
+        "name": "RAM Usage"
       }
     },
     "switch": {
@@ -100,6 +103,9 @@
       },
       "foreground": {
         "name": "Bring to Foreground"
+      },
+      "refresh_webview": {
+        "name": "Refresh WebView"
       }
     },
     "number": {

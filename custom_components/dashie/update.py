@@ -52,6 +52,18 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Dashie update entity."""
+    # Only create one update entity for the entire integration, not per device
+    # Check if we've already created the update entity
+    if DOMAIN not in hass.data:
+        hass.data[DOMAIN] = {}
+
+    if hass.data[DOMAIN].get("_update_entity_created"):
+        # Update entity already exists, skip creating another
+        return
+
+    # Mark that we're creating the update entity
+    hass.data[DOMAIN]["_update_entity_created"] = True
+
     # Create a coordinator for checking GitHub releases
     update_coordinator = DashieUpdateCoordinator(hass)
 
@@ -108,9 +120,14 @@ class DashieUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
 
 class DashieUpdateEntity(CoordinatorEntity[DashieUpdateCoordinator], UpdateEntity):
-    """Update entity for Dashie integration."""
+    """Update entity for Dashie integration.
 
-    _attr_has_entity_name = True
+    This entity is created only once per integration (not per device).
+    It does not have a device_info so it appears as a standalone entity
+    without creating a separate "Dashie Integration" device.
+    """
+
+    _attr_has_entity_name = False  # Use name directly, not device + entity name
     _attr_device_class = UpdateDeviceClass.FIRMWARE
     _attr_supported_features = UpdateEntityFeature.RELEASE_NOTES
     _attr_title = "Dashie Integration"
@@ -124,20 +141,12 @@ class DashieUpdateEntity(CoordinatorEntity[DashieUpdateCoordinator], UpdateEntit
         super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{DOMAIN}_integration_update"
-        self._attr_name = "Integration Update"
+        self._attr_name = "Dashie Integration Update"
         self._current_version = _get_current_version()
 
-    @property
-    def device_info(self) -> dict[str, Any]:
-        """Return device info - associate with the Dashie integration itself."""
-        return {
-            "identifiers": {(DOMAIN, "integration")},
-            "name": "Dashie Integration",
-            "manufacturer": "Dashie",
-            "model": "Home Assistant Integration",
-            "sw_version": self._current_version,
-            "configuration_url": "https://github.com/jwlerch78/dashie-ha-integration",
-        }
+    # Note: No device_info property - this entity is standalone and doesn't
+    # create a separate device. This prevents the "Dashie Integration" device
+    # from appearing under each Dashie device in the UI.
 
     @property
     def installed_version(self) -> str | None:
