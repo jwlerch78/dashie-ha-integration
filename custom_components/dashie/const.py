@@ -13,7 +13,7 @@ CONF_MEDIA_BASE_PATH = "media_base_path"
 
 # Defaults
 DEFAULT_PORT = 2323
-DEFAULT_SCAN_INTERVAL = 15
+DEFAULT_SCAN_INTERVAL = 5
 DEFAULT_MEDIA_FOLDER = "."  # Root of media folder
 DEFAULT_MEDIA_BASE_PATH = ""  # Empty = use /config/media, otherwise absolute path
 
@@ -53,6 +53,13 @@ API_CLEAR_PIN = "clearPin"
 
 # Audio
 API_SET_VOLUME = "setAudioVolume"
+API_MUTE_AUDIO = "muteAudio"
+API_UNMUTE_AUDIO = "unmuteAudio"
+API_PLAY_SOUND = "playSound"
+API_STOP_SOUND = "stopSound"
+API_PAUSE_SOUND = "pauseSound"
+API_RESUME_SOUND = "resumeSound"
+API_SEEK_SOUND = "seekSound"
 API_TEXT_TO_SPEECH = "textToSpeech"
 API_STOP_TEXT_TO_SPEECH = "stopTextToSpeech"
 
@@ -63,6 +70,7 @@ API_SET_BOOLEAN_SETTING = "setBooleanSetting"  # key, value (true/false)
 # WebView & Cache
 API_CLEAR_CACHE = "clearCache"
 API_CLEAR_WEBSTORAGE = "clearWebstorage"
+API_REFRESH_WEBVIEW = "refreshWebView"
 
 # Camera & RTSP
 API_GET_CAMSHOT = "getCamshot"

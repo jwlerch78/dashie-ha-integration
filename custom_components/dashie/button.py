@@ -15,6 +15,7 @@ from .const import (
     API_RESTART_APP,
     API_CLEAR_CACHE,
     API_CLEAR_WEBSTORAGE,
+    API_REFRESH_WEBVIEW,
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
@@ -34,6 +35,7 @@ async def async_setup_entry(
         DashieReloadButton(coordinator, device_id),
         DashieForegroundButton(coordinator, device_id),
         # Maintenance buttons (CONFIG category)
+        DashieRefreshWebViewButton(coordinator, device_id),
         DashieRestartButton(coordinator, device_id),
         DashieClearCacheButton(coordinator, device_id),
         DashieClearStorageButton(coordinator, device_id),
@@ -79,6 +81,24 @@ class DashieForegroundButton(DashieEntity, ButtonEntity):
 # =============================================================================
 # Maintenance Buttons (CONFIG category)
 # =============================================================================
+
+
+class DashieRefreshWebViewButton(DashieEntity, ButtonEntity):
+    """Refresh WebView button - releases memory while staying on current page."""
+
+    _attr_icon = "mdi:refresh-circle"
+    _attr_translation_key = "refresh_webview"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_refresh_webview"
+        self._attr_name = "Refresh WebView"
+
+    async def async_press(self) -> None:
+        """Refresh the WebView (navigate away and back to release memory)."""
+        await self.coordinator.send_command(API_REFRESH_WEBVIEW)
 
 
 class DashieRestartButton(DashieEntity, ButtonEntity):

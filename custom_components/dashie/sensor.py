@@ -47,6 +47,7 @@ async def async_setup_entry(
         DashieBatterySensor(coordinator, device_id),
         DashieCurrentPageSensor(coordinator, device_id),
         DashieDeviceIdSensor(coordinator, device_id),
+        DashieRamUsageSensor(coordinator, device_id),
         DashieStorageSensor(coordinator, device_id),
         DashieWifiSignalSensor(coordinator, device_id),
     ]
@@ -220,6 +221,50 @@ class DashieDeviceIdSensor(DashieEntity, SensorEntity):
         if self.coordinator.data:
             return self.coordinator.data.get("deviceID")
         return None
+
+
+class DashieRamUsageSensor(DashieEntity, SensorEntity):
+    """System RAM usage percentage sensor.
+
+    Shows the same RAM % as the performance overlay - system-wide RAM usage
+    calculated from ActivityManager.MemoryInfo (total - available) / total.
+    """
+
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:memory"
+    _attr_translation_key = "ram_usage"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_ram_usage"
+        self._attr_name = "RAM Usage"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the system RAM usage percentage."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("ramUsedPercent")
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional RAM attributes."""
+        if not self.coordinator.data:
+            return {}
+        attrs = {}
+        total_mb = self.coordinator.data.get("ramTotalMb")
+        available_mb = self.coordinator.data.get("ramAvailableMb")
+        app_memory_mb = self.coordinator.data.get("appMemoryMb")
+        if total_mb:
+            attrs["total_mb"] = total_mb
+        if available_mb:
+            attrs["available_mb"] = available_mb
+        if app_memory_mb:
+            attrs["app_pss_mb"] = app_memory_mb
+        return attrs
 
 
 class DashieAndroidVersionSensor(DashieEntity, SensorEntity):

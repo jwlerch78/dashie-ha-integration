@@ -28,6 +28,7 @@ from .const import (
     SETTING_START_ON_BOOT,
     SETTING_HIDE_SIDEBAR,
     SETTING_HIDE_HEADER,
+    SETTING_RTSP_ENABLED,
     SETTING_RTSP_SOFTWARE_ENCODING,
 )
 from .coordinator import DashieCoordinator
@@ -112,6 +113,17 @@ class DashieScreenSwitch(DashieEntity, SwitchEntity):
         """Turn the screen off."""
         await self.coordinator.send_command(API_SCREEN_OFF)
         await self.coordinator.async_request_refresh()
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional attributes."""
+        if not self.coordinator.data:
+            return {}
+        is_device_admin = self.coordinator.data.get("isDeviceAdmin", False)
+        return {
+            "hardware_screen_off_available": is_device_admin,
+            "screen_off_mode": "hardware" if is_device_admin else "overlay",
+        }
 
 
 class DashieScreensaverSwitch(DashieEntity, SwitchEntity):
@@ -474,18 +486,20 @@ class DashieRtspStreamSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start RTSP streaming."""
-        success = await self.coordinator.send_command(API_START_RTSP_STREAM)
-        if success:
-            # Optimistic update for immediate UI feedback
-            self.coordinator.update_local_data(rtspEnabled=True)
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="true"
+        )
+        self.coordinator.update_local_data(rtspEnabled=True)
+        await self.coordinator.send_command(API_START_RTSP_STREAM)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop RTSP streaming."""
-        success = await self.coordinator.send_command(API_STOP_RTSP_STREAM)
-        if success:
-            # Optimistic update for immediate UI feedback
-            self.coordinator.update_local_data(rtspEnabled=False)
+        await self.coordinator.send_command(
+            API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="false"
+        )
+        await self.coordinator.send_command(API_STOP_RTSP_STREAM)
+        self.coordinator.update_local_data(rtspEnabled=False)
         await self.coordinator.async_request_refresh()
 
 

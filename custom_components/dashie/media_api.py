@@ -99,7 +99,7 @@ class DashieMediaListView(HomeAssistantView):
         random_order = request.query.get("random", "false").lower() == "true"
 
         # Build path to media folder ("." means root, "*" means all folders)
-        media_base = _get_media_base_path(hass)
+        media_base = await hass.async_add_executor_job(_get_media_base_path, hass)
 
         if folder == "*":
             # Scan ALL folders recursively
@@ -172,7 +172,7 @@ class DashieMediaImageView(HomeAssistantView):
         hass: HomeAssistant = request.app["hass"]
 
         # Build path and validate ("." means root media folder)
-        media_dir = _get_media_base_path(hass)
+        media_dir = await hass.async_add_executor_job(_get_media_base_path, hass)
         if folder == ".":
             file_path = media_dir / filename
         else:
@@ -210,7 +210,7 @@ class DashieMediaFoldersView(HomeAssistantView):
         """List folders in the media directory that contain images."""
         hass: HomeAssistant = request.app["hass"]
 
-        media_dir = _get_media_base_path(hass)
+        media_dir = await hass.async_add_executor_job(_get_media_base_path, hass)
 
         if not media_dir.exists():
             return web.json_response({
