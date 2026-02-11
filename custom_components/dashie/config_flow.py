@@ -40,11 +40,11 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_ssdp(self, discovery_info: ssdp.SsdpServiceInfo) -> FlowResult:
         """Handle SSDP discovery."""
-        _LOGGER.warning("🔍 SSDP discovery received!")
-        _LOGGER.warning("  Location: %s", discovery_info.ssdp_location)
-        _LOGGER.warning("  ST: %s", discovery_info.ssdp_st)
-        _LOGGER.warning("  USN: %s", discovery_info.ssdp_usn)
-        _LOGGER.warning("  Headers: %s", discovery_info.ssdp_headers)
+        _LOGGER.debug("🔍 SSDP discovery received!")
+        _LOGGER.debug("  Location: %s", discovery_info.ssdp_location)
+        _LOGGER.debug("  ST: %s", discovery_info.ssdp_st)
+        _LOGGER.debug("  USN: %s", discovery_info.ssdp_usn)
+        _LOGGER.debug("  Headers: %s", discovery_info.ssdp_headers)
         _LOGGER.debug("SSDP discovery received: %s", discovery_info)
 
         # Parse location URL to get host and port
@@ -61,10 +61,10 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # or where unique_id changed (e.g., device_id vs ssdp_uuid mismatch)
         for entry in self._async_current_entries():
             if entry.data.get(CONF_HOST) == self._host:
-                _LOGGER.warning("❌ Aborting: Device at %s already configured (entry: %s)", self._host, entry.entry_id)
+                _LOGGER.debug("❌ Aborting: Device at %s already configured (entry: %s)", self._host, entry.entry_id)
                 return self.async_abort(reason="already_configured")
 
-        _LOGGER.warning("✅ No existing entry for %s, continuing discovery", self._host)
+        _LOGGER.debug("✅ No existing entry for %s, continuing discovery", self._host)
 
         # Get device name and HA URL from SSDP headers
         # Custom X- headers are in ssdp_headers, not upnp
@@ -85,11 +85,11 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Set unique_id early from SSDP UUID to prevent duplicate discoveries
         if ssdp_uuid:
-            _LOGGER.warning("🔑 Setting unique_id from SSDP UUID: %s", ssdp_uuid)
+            _LOGGER.debug("🔑 Setting unique_id from SSDP UUID: %s", ssdp_uuid)
             await self.async_set_unique_id(ssdp_uuid)
-            _LOGGER.warning("🔍 Checking if unique_id already configured...")
+            _LOGGER.debug("🔍 Checking if unique_id already configured...")
             self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
-            _LOGGER.warning("✅ Unique_id not already configured, continuing")
+            _LOGGER.debug("✅ Unique_id not already configured, continuing")
 
         # Optional: Check if this tablet is configured to connect to THIS HA instance
         if configured_ha_url:
@@ -97,25 +97,25 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Try to fetch device info without password first
         try:
-            _LOGGER.warning("🌐 Fetching device info from %s:%s", self._host, self._port)
+            _LOGGER.debug("🌐 Fetching device info from %s:%s", self._host, self._port)
             self._device_info = await self._fetch_device_info()
             device_id = self._device_info.get("deviceID")
-            _LOGGER.warning("📱 Received deviceID: %s", device_id)
+            _LOGGER.debug("📱 Received deviceID: %s", device_id)
 
             if device_id:
                 # Update unique_id with actual device_id (more reliable than UUID)
-                _LOGGER.warning("🔑 Updating unique_id to deviceID: %s", device_id)
+                _LOGGER.debug("🔑 Updating unique_id to deviceID: %s", device_id)
                 await self.async_set_unique_id(device_id)
-                _LOGGER.warning("🔍 Checking if deviceID already configured...")
+                _LOGGER.debug("🔍 Checking if deviceID already configured...")
                 self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
-                _LOGGER.warning("✅ DeviceID not already configured, proceeding to confirm")
+                _LOGGER.debug("✅ DeviceID not already configured, proceeding to confirm")
 
                 self._device_info["deviceName"] = device_name
                 self.context["title_placeholders"] = {"name": device_name}
                 return await self.async_step_confirm()
 
         except aiohttp.ClientResponseError as err:
-            _LOGGER.warning("❌ API returned error %s - going to password step", err.status)
+            _LOGGER.debug("❌ API returned error %s - going to password step", err.status)
             if err.status == 401:
                 # Password required - go to password step
                 # Note: unique_id was already set from SSDP UUID above
@@ -126,17 +126,17 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.error("❌ Failed to fetch device info: %s", err)
             return self.async_abort(reason="cannot_connect")
 
-        _LOGGER.warning("❌ Aborting: No deviceID in response")
+        _LOGGER.debug("❌ Aborting: No deviceID in response")
         return self.async_abort(reason="no_device_id")
 
     async def async_step_zeroconf(self, discovery_info: Any) -> FlowResult:
         """Handle zeroconf/mDNS discovery."""
-        _LOGGER.warning("🔍 Zeroconf discovery received!")
-        _LOGGER.warning("  Name: %s", discovery_info.name)
-        _LOGGER.warning("  Type: %s", discovery_info.type)
-        _LOGGER.warning("  Host: %s", discovery_info.host)
-        _LOGGER.warning("  Port: %s", discovery_info.port)
-        _LOGGER.warning("  Properties: %s", discovery_info.properties)
+        _LOGGER.debug("🔍 Zeroconf discovery received!")
+        _LOGGER.debug("  Name: %s", discovery_info.name)
+        _LOGGER.debug("  Type: %s", discovery_info.type)
+        _LOGGER.debug("  Host: %s", discovery_info.host)
+        _LOGGER.debug("  Port: %s", discovery_info.port)
+        _LOGGER.debug("  Properties: %s", discovery_info.properties)
 
         # Extract host and port from zeroconf discovery
         self._host = discovery_info.host
@@ -153,33 +153,33 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Check if we already have an entry with this host IP
         for entry in self._async_current_entries():
             if entry.data.get(CONF_HOST) == self._host:
-                _LOGGER.warning("❌ Aborting: Device at %s already configured (entry: %s)", self._host, entry.entry_id)
+                _LOGGER.debug("❌ Aborting: Device at %s already configured (entry: %s)", self._host, entry.entry_id)
                 return self.async_abort(reason="already_configured")
 
-        _LOGGER.warning("✅ No existing entry for %s, continuing discovery", self._host)
+        _LOGGER.debug("✅ No existing entry for %s, continuing discovery", self._host)
 
         # Set unique_id from UUID if available
         if device_uuid:
-            _LOGGER.warning("🔑 Setting unique_id from Zeroconf UUID: %s", device_uuid)
+            _LOGGER.debug("🔑 Setting unique_id from Zeroconf UUID: %s", device_uuid)
             await self.async_set_unique_id(device_uuid)
-            _LOGGER.warning("🔍 Checking if unique_id already configured...")
+            _LOGGER.debug("🔍 Checking if unique_id already configured...")
             self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
-            _LOGGER.warning("✅ Unique_id not already configured, continuing")
+            _LOGGER.debug("✅ Unique_id not already configured, continuing")
 
         # Try to fetch device info without password first
         try:
-            _LOGGER.warning("🌐 Fetching device info from %s:%s", self._host, self._port)
+            _LOGGER.debug("🌐 Fetching device info from %s:%s", self._host, self._port)
             self._device_info = await self._fetch_device_info()
             device_id = self._device_info.get("deviceID")
-            _LOGGER.warning("📱 Received deviceID: %s", device_id)
+            _LOGGER.debug("📱 Received deviceID: %s", device_id)
 
             if device_id:
                 # Update unique_id with actual device_id (more reliable than UUID)
-                _LOGGER.warning("🔑 Updating unique_id to deviceID: %s", device_id)
+                _LOGGER.debug("🔑 Updating unique_id to deviceID: %s", device_id)
                 await self.async_set_unique_id(device_id)
-                _LOGGER.warning("🔍 Checking if deviceID already configured...")
+                _LOGGER.debug("🔍 Checking if deviceID already configured...")
                 self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
-                _LOGGER.warning("✅ DeviceID not already configured, proceeding to confirm")
+                _LOGGER.debug("✅ DeviceID not already configured, proceeding to confirm")
 
                 self._device_info["deviceName"] = device_name
                 self._is_dashie_lite = True  # Zeroconf discovery is Dashie Lite only
@@ -187,7 +187,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_confirm()
 
         except aiohttp.ClientResponseError as err:
-            _LOGGER.warning("❌ API returned error %s - going to password step", err.status)
+            _LOGGER.debug("❌ API returned error %s - going to password step", err.status)
             if err.status == 401:
                 # Password required - go to password step
                 self.context["title_placeholders"] = {"name": device_name}
@@ -197,7 +197,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.error("❌ Failed to fetch device info: %s", err)
             return self.async_abort(reason="cannot_connect")
 
-        _LOGGER.warning("❌ Aborting: No deviceID in response")
+        _LOGGER.debug("❌ Aborting: No deviceID in response")
         return self.async_abort(reason="no_device_id")
 
     async def async_step_password(

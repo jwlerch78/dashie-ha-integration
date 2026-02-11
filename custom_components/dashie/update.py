@@ -34,8 +34,8 @@ GITHUB_API_RELEASES = "https://api.github.com/repos/jwlerch78/dashie-ha-integrat
 UPDATE_CHECK_INTERVAL = timedelta(hours=6)
 
 
-def _get_current_version() -> str:
-    """Read current version from manifest.json."""
+def _get_current_version_sync() -> str:
+    """Read current version from manifest.json (blocking I/O, run in executor)."""
     try:
         manifest_path = Path(__file__).parent / "manifest.json"
         with open(manifest_path, encoding="utf-8") as f:
@@ -64,13 +64,16 @@ async def async_setup_entry(
     # Mark that we're creating the update entity
     hass.data[DOMAIN]["_update_entity_created"] = True
 
+    # Read current version in executor to avoid blocking the event loop
+    current_version = await hass.async_add_executor_job(_get_current_version_sync)
+
     # Create a coordinator for checking GitHub releases
     update_coordinator = DashieUpdateCoordinator(hass)
 
     # Do initial fetch
     await update_coordinator.async_config_entry_first_refresh()
 
-    async_add_entities([DashieUpdateEntity(update_coordinator, entry)])
+    async_add_entities([DashieUpdateEntity(update_coordinator, entry, current_version)])
 
 
 class DashieUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -136,13 +139,14 @@ class DashieUpdateEntity(CoordinatorEntity[DashieUpdateCoordinator], UpdateEntit
         self,
         coordinator: DashieUpdateCoordinator,
         entry: ConfigEntry,
+        current_version: str,
     ) -> None:
         """Initialize the update entity."""
         super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{DOMAIN}_integration_update"
         self._attr_name = "Dashie Integration Update"
-        self._current_version = _get_current_version()
+        self._current_version = current_version
 
     # Note: No device_info property - this entity is standalone and doesn't
     # create a separate device. This prevents the "Dashie Integration" device
