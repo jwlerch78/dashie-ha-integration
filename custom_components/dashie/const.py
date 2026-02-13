@@ -117,5 +117,3 @@ MOTION_WAKE_MODES = {
     "camera": "Camera-based",
 }
 
-# SSDP discovery
-SSDP_ST = "urn:dashie:service:DashieLite:1"

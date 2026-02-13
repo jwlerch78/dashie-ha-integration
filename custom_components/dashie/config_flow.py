@@ -3,13 +3,11 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import urlparse
 
 import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.components import ssdp
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_PASSWORD
 from homeassistant.data_entry_flow import FlowResult
 
@@ -37,97 +35,6 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._password: str = ""
         self._device_info: dict | None = None
         self._is_dashie_lite: bool = False
-
-    async def async_step_ssdp(self, discovery_info: ssdp.SsdpServiceInfo) -> FlowResult:
-        """Handle SSDP discovery."""
-        _LOGGER.debug("🔍 SSDP discovery received!")
-        _LOGGER.debug("  Location: %s", discovery_info.ssdp_location)
-        _LOGGER.debug("  ST: %s", discovery_info.ssdp_st)
-        _LOGGER.debug("  USN: %s", discovery_info.ssdp_usn)
-        _LOGGER.debug("  Headers: %s", discovery_info.ssdp_headers)
-        _LOGGER.debug("SSDP discovery received: %s", discovery_info)
-
-        # Parse location URL to get host and port
-        location = discovery_info.ssdp_location
-        if not location:
-            return self.async_abort(reason="no_location")
-
-        parsed = urlparse(location)
-        self._host = parsed.hostname
-        self._port = parsed.port or DEFAULT_PORT
-
-        # Check if we already have an entry with this host IP
-        # This catches devices that were configured before we had proper unique_id handling,
-        # or where unique_id changed (e.g., device_id vs ssdp_uuid mismatch)
-        for entry in self._async_current_entries():
-            if entry.data.get(CONF_HOST) == self._host:
-                _LOGGER.debug("❌ Aborting: Device at %s already configured (entry: %s)", self._host, entry.entry_id)
-                return self.async_abort(reason="already_configured")
-
-        _LOGGER.debug("✅ No existing entry for %s, continuing discovery", self._host)
-
-        # Get device name and HA URL from SSDP headers
-        # Custom X- headers are in ssdp_headers, not upnp
-        ssdp_headers = discovery_info.ssdp_headers or {}
-        device_name = ssdp_headers.get("X-DASHIE-NAME") or ssdp_headers.get("x-dashie-name") or "Dashie"
-        configured_ha_url = ssdp_headers.get("X-DASHIE-HA-URL") or ssdp_headers.get("x-dashie-ha-url")
-
-        # Detect if this is a Dashie Lite device based on service type
-        ssdp_st = discovery_info.ssdp_st or ""
-        self._is_dashie_lite = "DashieLite" in ssdp_st
-
-        # Extract UUID from USN header (format: uuid:xxx::urn:dashie:service:DashieLite:1 or Dashie:1)
-        usn = discovery_info.ssdp_usn or ""
-        ssdp_uuid = None
-        if usn.startswith("uuid:"):
-            # Extract just the UUID part before the "::" separator
-            ssdp_uuid = usn.split("::")[0].replace("uuid:", "")
-
-        # Set unique_id early from SSDP UUID to prevent duplicate discoveries
-        if ssdp_uuid:
-            _LOGGER.debug("🔑 Setting unique_id from SSDP UUID: %s", ssdp_uuid)
-            await self.async_set_unique_id(ssdp_uuid)
-            _LOGGER.debug("🔍 Checking if unique_id already configured...")
-            self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
-            _LOGGER.debug("✅ Unique_id not already configured, continuing")
-
-        # Optional: Check if this tablet is configured to connect to THIS HA instance
-        if configured_ha_url:
-            _LOGGER.debug("Tablet configured for HA URL: %s", configured_ha_url)
-
-        # Try to fetch device info without password first
-        try:
-            _LOGGER.debug("🌐 Fetching device info from %s:%s", self._host, self._port)
-            self._device_info = await self._fetch_device_info()
-            device_id = self._device_info.get("deviceID")
-            _LOGGER.debug("📱 Received deviceID: %s", device_id)
-
-            if device_id:
-                # Update unique_id with actual device_id (more reliable than UUID)
-                _LOGGER.debug("🔑 Updating unique_id to deviceID: %s", device_id)
-                await self.async_set_unique_id(device_id)
-                _LOGGER.debug("🔍 Checking if deviceID already configured...")
-                self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
-                _LOGGER.debug("✅ DeviceID not already configured, proceeding to confirm")
-
-                self._device_info["deviceName"] = device_name
-                self.context["title_placeholders"] = {"name": device_name}
-                return await self.async_step_confirm()
-
-        except aiohttp.ClientResponseError as err:
-            _LOGGER.debug("❌ API returned error %s - going to password step", err.status)
-            if err.status == 401:
-                # Password required - go to password step
-                # Note: unique_id was already set from SSDP UUID above
-                self.context["title_placeholders"] = {"name": device_name}
-                return await self.async_step_password()
-            raise
-        except Exception as err:
-            _LOGGER.error("❌ Failed to fetch device info: %s", err)
-            return self.async_abort(reason="cannot_connect")
-
-        _LOGGER.debug("❌ Aborting: No deviceID in response")
-        return self.async_abort(reason="no_device_id")
 
     async def async_step_zeroconf(self, discovery_info: Any) -> FlowResult:
         """Handle zeroconf/mDNS discovery."""
@@ -352,7 +259,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if self._password:
                 url += f"&password={self._password}"
 
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5, connect=3)) as response:
                 response.raise_for_status()
                 data = await response.json()
 
@@ -404,7 +311,7 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
                             url += f"&password={new_password}"
 
                         async with session.get(
-                            url, timeout=aiohttp.ClientTimeout(total=10)
+                            url, timeout=aiohttp.ClientTimeout(total=5, connect=3)
                         ) as response:
                             response.raise_for_status()
                             data = await response.json()

@@ -22,6 +22,9 @@ MAX_BACKOFF = 120
 MEDIUM_BACKOFF_THRESHOLD = 4   # Switch to 30s after 4 failures
 MAX_BACKOFF_THRESHOLD = 12     # Switch to 2 min after 12 failures
 
+# HTTP timeouts for local network devices
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=5, connect=3)
+
 
 class DashieCoordinator(DataUpdateCoordinator):
     """Coordinator to manage fetching data from Dashie Lite device."""
@@ -39,6 +42,8 @@ class DashieCoordinator(DataUpdateCoordinator):
         self.password = password
         self.base_url = f"http://{host}:{port}"
         self._consecutive_failures = 0
+        self._session: aiohttp.ClientSession | None = None
+        self._is_first_refresh = True
         # Store PIN for unlocking (set when user configures PIN via HA)
         self._stored_pin: str = ""
 
@@ -51,6 +56,19 @@ class DashieCoordinator(DataUpdateCoordinator):
         """Store the PIN for use when unlocking."""
         self._stored_pin = pin
         _LOGGER.debug("Stored PIN updated")
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create a reusable HTTP session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=HTTP_TIMEOUT)
+        return self._session
+
+    async def async_shutdown(self) -> None:
+        """Close the HTTP session on shutdown."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+        await super().async_shutdown()
 
     def update_local_data(self, **kwargs) -> None:
         """Optimistically update local data cache for immediate UI feedback.
@@ -108,7 +126,7 @@ class DashieCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         """Fetch data from Dashie Lite device."""
         try:
-            async with asyncio.timeout(15):  # Increased timeout
+            async with asyncio.timeout(10):
                 data = await self._fetch_device_info()
                 # Reset failure counter and backoff on success
                 self._reset_backoff()
@@ -125,37 +143,58 @@ class DashieCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Unexpected error: {err}") from err
 
     async def _fetch_device_info(self) -> dict:
-        """Fetch device info from the Fully Kiosk API."""
-        timeout = aiohttp.ClientTimeout(total=10, connect=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            url = f"{self.base_url}/?cmd={API_DEVICE_INFO}&type=json"
-            if self.password:
-                url += f"&password={self.password}"
+        """Fetch device info from the device API."""
+        session = await self._get_session()
 
-            async with session.get(url) as response:
-                response.raise_for_status()
-                data = await response.json()
+        url = f"{self.base_url}/?cmd={API_DEVICE_INFO}&type=json"
+        if self.password:
+            url += f"&password={self.password}"
 
-                # Check for error response
-                if data.get("status") == "ERROR":
-                    raise UpdateFailed(data.get("message", "Unknown error"))
+        async with session.get(url) as response:
+            response.raise_for_status()
+            data = await response.json()
 
-            # Also fetch RTSP status for camera entity
-            rtsp_data = await self._fetch_rtsp_status(session)
-            if rtsp_data:
-                data["rtsp_status"] = rtsp_data
+            # Check for error response
+            if data.get("status") == "ERROR":
+                raise UpdateFailed(data.get("message", "Unknown error"))
 
-            # RTSP config - prefer from deviceInfo (rtspConfig), fallback to separate API call
+        # On first refresh, skip RTSP calls to speed up initial connection.
+        # RTSP data will be populated on the next poll cycle (5s later).
+        if self._is_first_refresh:
+            self._is_first_refresh = False
+            # Carry over rtspConfig from deviceInfo if present
             if "rtspConfig" in data:
-                # deviceInfo includes rtspConfig directly (camelCase)
                 data["rtsp_config"] = data["rtspConfig"]
-            else:
-                # Fallback: fetch from separate getRtspConfig API
-                rtsp_config = await self._fetch_rtsp_config(session)
-                if rtsp_config:
-                    data["rtsp_config"] = rtsp_config
-
             return data
+
+        # Fetch RTSP status and config in parallel
+        rtsp_status_task = self._fetch_rtsp_status(session)
+        rtsp_config_task = (
+            self._fetch_rtsp_config(session)
+            if "rtspConfig" not in data
+            else None
+        )
+
+        tasks = [rtsp_status_task]
+        if rtsp_config_task:
+            tasks.append(rtsp_config_task)
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # RTSP status
+        rtsp_status = results[0]
+        if isinstance(rtsp_status, dict):
+            data["rtsp_status"] = rtsp_status
+
+        # RTSP config - prefer from deviceInfo, fallback to API
+        if "rtspConfig" in data:
+            data["rtsp_config"] = data["rtspConfig"]
+        elif len(results) > 1:
+            rtsp_config = results[1]
+            if isinstance(rtsp_config, dict):
+                data["rtsp_config"] = rtsp_config
+
+        return data
 
     async def _fetch_rtsp_status(self, session: aiohttp.ClientSession) -> dict | None:
         """Fetch RTSP stream status from the device."""
@@ -192,25 +231,24 @@ class DashieCoordinator(DataUpdateCoordinator):
     async def send_command(self, command: str, **kwargs) -> bool:
         """Send a command to the Dashie Lite device."""
         try:
-            timeout = aiohttp.ClientTimeout(total=10, connect=5)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                params = {"cmd": command}
-                if self.password:
-                    params["password"] = self.password
-                params.update(kwargs)
+            session = await self._get_session()
+            params = {"cmd": command}
+            if self.password:
+                params["password"] = self.password
+            params.update(kwargs)
 
-                url = f"{self.base_url}/"
-                async with session.get(url, params=params) as response:
-                    response.raise_for_status()
-                    result = await response.json()
+            url = f"{self.base_url}/"
+            async with session.get(url, params=params) as response:
+                response.raise_for_status()
+                result = await response.json()
 
-                    # Check for error response
-                    if result.get("status") == "ERROR":
-                        _LOGGER.error("Command %s failed: %s", command, result.get("message"))
-                        return False
+                # Check for error response
+                if result.get("status") == "ERROR":
+                    _LOGGER.error("Command %s failed: %s", command, result.get("message"))
+                    return False
 
-                    _LOGGER.debug("Command %s sent successfully", command)
-                    return True
+                _LOGGER.debug("Command %s sent successfully", command)
+                return True
         except asyncio.TimeoutError:
             _LOGGER.error("Timeout sending command %s to %s", command, self.host)
             return False
