@@ -59,7 +59,7 @@ async def async_setup_entry(
         # =================================================================
         DashieKeepScreenOnSwitch(coordinator, device_id),
         DashieAutoBrightnessSwitch(coordinator, device_id),
-        DashieDarkModeSwitch(coordinator, device_id),  # May be unavailable on Fire Tablets
+        DashieDarkModeSwitch(coordinator, device_id),  # Requires WRITE_SECURE_SETTINGS permission
 
         # =================================================================
         # CAMERA (CONFIG category with "Camera:" prefix)
@@ -213,7 +213,7 @@ class DashieDarkModeSwitch(DashieEntity, SwitchEntity):
         if not self.coordinator.data:
             _LOGGER.info("Dark mode: no coordinator data")
             return False
-        # Fire Tablets don't support dark mode (requires WRITE_SECURE_SETTINGS)
+        # Requires WRITE_SECURE_SETTINGS permission (dynamically checked on device)
         supported = self.coordinator.data.get("supportsDarkMode", True)
         _LOGGER.info("Dark mode available check: supportsDarkMode=%s, data keys=%s",
                      supported, list(self.coordinator.data.keys())[:10])
