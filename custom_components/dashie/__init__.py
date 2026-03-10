@@ -24,8 +24,13 @@ from .const import (
     API_SET_BRIGHTNESS,
     API_SET_VOLUME,
 )
+from .const import CONF_DEVICE_ID
 from .coordinator import DashieCoordinator
+from .feed_registry import FeedRegistry, register_feed_registry_views
 from .media_api import register_media_api_views
+from .sensor_push import register_sensor_push_views
+from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
+from .stream_proxy import register_stream_proxy_views
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,8 +68,12 @@ TIMER_TICK_INTERVAL = timedelta(seconds=1)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-# Track if media API is registered (only register once)
+# Track if views are registered (only register once)
 _media_api_registered = False
+_stream_proxy_registered = False
+_feed_registry_registered = False
+_multiplexer_registered = False
+_sensor_push_registered = False
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -75,13 +84,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie Lite from a config entry."""
-    global _media_api_registered
+    global _media_api_registered, _stream_proxy_registered
+    global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
 
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
     password = entry.data.get(CONF_PASSWORD, "")
 
     coordinator = DashieCoordinator(hass, host, port, password)
+    # Store device_id for feed subscription lookups
+    coordinator.device_id = entry.data.get(CONF_DEVICE_ID)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})
@@ -93,11 +105,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_COMMAND):
         await _async_register_services(hass)
 
-    # Register Media API views (only once)
+    # Initialize feed registry (only once)
+    if "feed_registry" not in hass.data[DOMAIN]:
+        registry = FeedRegistry(hass)
+        await registry.async_load()
+        hass.data[DOMAIN]["feed_registry"] = registry
+        _LOGGER.info("Initialized Dashie feed registry")
+
+    # Initialize stream multiplexer (only once)
+    if "stream_multiplexer" not in hass.data[DOMAIN]:
+        hass.data[DOMAIN]["stream_multiplexer"] = StreamMultiplexer(hass)
+        _LOGGER.info("Initialized Dashie stream multiplexer")
+
+    # Register HTTP views (only once)
     if not _media_api_registered:
         register_media_api_views(hass)
         _media_api_registered = True
         _LOGGER.info("Registered Dashie Media API views")
+
+    if not _stream_proxy_registered:
+        register_stream_proxy_views(hass)
+        _stream_proxy_registered = True
+        _LOGGER.info("Registered Dashie MJPEG stream proxy")
+
+    if not _feed_registry_registered:
+        register_feed_registry_views(hass)
+        _feed_registry_registered = True
+        _LOGGER.info("Registered Dashie feed registry views")
+
+    if not _multiplexer_registered:
+        register_stream_multiplexer_views(hass)
+        _multiplexer_registered = True
+        _LOGGER.info("Registered Dashie stream multiplexer views")
+
+    if not _sensor_push_registered:
+        register_sensor_push_views(hass)
+        _sensor_push_registered = True
+        _LOGGER.info("Registered Dashie sensor push endpoint")
+
+    # Set up centralized feed trigger subscriptions
+    registry = hass.data[DOMAIN]["feed_registry"]
+    coordinator.set_feed_registry(registry)
 
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
@@ -509,5 +557,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Stop timer tick interval
         if "timer_unsub" in hass.data[DOMAIN]:
             hass.data[DOMAIN]["timer_unsub"]()
+        # Shut down stream multiplexer
+        multiplexer = hass.data[DOMAIN].pop("stream_multiplexer", None)
+        if multiplexer:
+            await multiplexer.async_shutdown()
 
     return unload_ok
