@@ -29,6 +29,8 @@ async def async_setup_entry(
         DashieScreensaverSensor(coordinator, device_id),
         DashiePinSetSensor(coordinator, device_id),
         DashieDeviceAdminSensor(coordinator, device_id),
+        DashieMotionSensor(coordinator, device_id),
+        DashieFaceSensor(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -155,3 +157,43 @@ class DashieDeviceAdminSensor(DashieEntity, BinarySensorEntity):
             "how_to_enable": "In Dashie Lite settings, set screensaver mode to 'Screen Off' "
                              "and grant the permission when prompted.",
         }
+
+
+class DashieMotionSensor(DashieEntity, BinarySensorEntity):
+    """Camera motion detection binary sensor."""
+
+    _attr_device_class = BinarySensorDeviceClass.MOTION
+    _attr_translation_key = "motion_detected"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_motion_detected"
+        self._attr_name = "Motion Detected"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if motion is detected."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("motionDetected", False)
+        return None
+
+
+class DashieFaceSensor(DashieEntity, BinarySensorEntity):
+    """Camera face detection binary sensor."""
+
+    _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
+    _attr_translation_key = "face_detected"
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_face_detected"
+        self._attr_name = "Face Detected"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if a face is detected."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("faceDetected", False)
+        return None

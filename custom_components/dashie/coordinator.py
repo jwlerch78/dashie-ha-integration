@@ -7,7 +7,8 @@ from datetime import timedelta
 
 import aiohttp
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DEFAULT_SCAN_INTERVAL, API_DEVICE_INFO
@@ -46,6 +47,12 @@ class DashieCoordinator(DataUpdateCoordinator):
         self._is_first_refresh = True
         # Store PIN for unlocking (set when user configures PIN via HA)
         self._stored_pin: str = ""
+        # Video feed trigger tracking (centralized via feed registry)
+        self._feed_registry = None
+        self._tracked_trigger_entities: set[str] = set()
+        self._trigger_unsub: list = []
+        # Device identity (set by __init__.py from config entry)
+        self.device_id: str | None = None
 
     @property
     def stored_pin(self) -> str:
@@ -65,6 +72,7 @@ class DashieCoordinator(DataUpdateCoordinator):
 
     async def async_shutdown(self) -> None:
         """Close the HTTP session on shutdown."""
+        self._unsubscribe_triggers()
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -130,6 +138,8 @@ class DashieCoordinator(DataUpdateCoordinator):
                 data = await self._fetch_device_info()
                 # Reset failure counter and backoff on success
                 self._reset_backoff()
+                # Update video feed trigger subscriptions if entity list changed
+                self._update_trigger_subscriptions(data)
                 return data
         except asyncio.TimeoutError as err:
             self._apply_backoff()
@@ -227,6 +237,158 @@ class DashieCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.debug("Could not fetch RTSP config: %s", err)
         return None
+
+    # ── Centralized Video Feed Trigger Tracking ─────────────────────
+
+    def set_feed_registry(self, registry) -> None:
+        """Set the feed registry and subscribe to trigger entities."""
+        self._feed_registry = registry
+        self.refresh_feed_triggers()
+
+    @callback
+    def refresh_feed_triggers(self) -> None:
+        """Refresh trigger subscriptions from the feed registry.
+
+        Called when feeds are created/updated/deleted. Only the first
+        coordinator to call this actually subscribes (triggers are global,
+        but each coordinator handles pushing to its own device).
+        """
+        if not self._feed_registry:
+            return
+
+        new_entities = self._feed_registry.get_all_trigger_entities()
+        if new_entities == self._tracked_trigger_entities:
+            return
+
+        _LOGGER.info(
+            "Feed trigger entities changed for %s: %s -> %s",
+            self.host, self._tracked_trigger_entities, new_entities,
+        )
+
+        self._unsubscribe_triggers()
+        self._tracked_trigger_entities = new_entities
+
+        if not new_entities:
+            return
+
+        unsub = async_track_state_change_event(
+            self.hass, list(new_entities), self._handle_feed_trigger
+        )
+        self._trigger_unsub.append(unsub)
+        _LOGGER.info(
+            "Subscribed to %d feed trigger entities for %s",
+            len(new_entities), self.host,
+        )
+
+    # Keep legacy method for backward compat during transition
+    @callback
+    def _update_trigger_subscriptions(self, data: dict) -> None:
+        """Legacy: update from deviceInfo. No-op if feed registry is active."""
+        if self._feed_registry:
+            return  # Triggers managed by registry now
+
+        new_entities = set(data.get("videoFeedTriggerEntities", []))
+        if new_entities == self._tracked_trigger_entities:
+            return
+
+        self._unsubscribe_triggers()
+        self._tracked_trigger_entities = new_entities
+
+        if not new_entities:
+            return
+
+        unsub = async_track_state_change_event(
+            self.hass, list(new_entities), self._handle_legacy_trigger
+        )
+        self._trigger_unsub.append(unsub)
+
+    def _unsubscribe_triggers(self) -> None:
+        """Remove all trigger state change subscriptions."""
+        for unsub in self._trigger_unsub:
+            unsub()
+        self._trigger_unsub.clear()
+
+    @callback
+    def _handle_feed_trigger(self, event: Event) -> None:
+        """Handle trigger from centralized feed registry.
+
+        Looks up which feeds match, checks if this device subscribes
+        with trigger or trigger_alert mode, and pushes accordingly.
+        """
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if new_state is None:
+            return
+
+        entity_id = new_state.entity_id
+        state_val = new_state.state
+        old_val = old_state.state if old_state else None
+
+        if old_val == state_val:
+            return
+
+        if not self._feed_registry or not self.device_id:
+            return
+
+        # Find matching feeds
+        matching_feeds = self._feed_registry.get_feeds_for_trigger(entity_id, state_val)
+        if not matching_feeds:
+            return
+
+        for feed in matching_feeds:
+            feed_id = feed["id"]
+            # Check this device's subscription mode
+            sub = self._feed_registry.get_subscription(self.device_id)
+            mode = sub.get("feed_modes", {}).get(
+                feed_id, feed.get("default_mode", "subscribed")
+            )
+
+            if mode not in ("trigger", "trigger_alert"):
+                continue
+
+            _LOGGER.debug(
+                "Feed trigger: %s -> feed %s, pushing to %s (mode=%s)",
+                entity_id, feed_id, self.host, mode,
+            )
+            self.hass.async_create_task(
+                self.send_command(
+                    "videoFeedTrigger",
+                    entityId=entity_id,
+                    state=state_val,
+                    feedId=feed_id,
+                    feedLabel=feed.get("label", ""),
+                    cameraEntityId=feed.get("camera_entity_id", ""),
+                    mode=mode,
+                    autoDismissSeconds=str(feed.get("auto_dismiss_seconds", 30)),
+                    continueWhileActive=str(feed.get("continue_while_active", True)).lower(),
+                    alertSound=feed.get("alert_sound", ""),
+                    streamSourceType=feed.get("stream_source_type", "entity"),
+                    streamSourceUrl=feed.get("stream_source_url", ""),
+                )
+            )
+
+    @callback
+    def _handle_legacy_trigger(self, event: Event) -> None:
+        """Legacy trigger handler: push directly to this device only."""
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if new_state is None:
+            return
+
+        entity_id = new_state.entity_id
+        state_val = new_state.state
+        old_val = old_state.state if old_state else None
+
+        if old_val == state_val:
+            return
+
+        _LOGGER.debug(
+            "Legacy video feed trigger: %s changed %s -> %s, pushing to %s",
+            entity_id, old_val, state_val, self.host
+        )
+        self.hass.async_create_task(
+            self.send_command("videoFeedTrigger", entityId=entity_id, state=state_val)
+        )
 
     async def send_command(self, command: str, **kwargs) -> bool:
         """Send a command to the Dashie Lite device."""
