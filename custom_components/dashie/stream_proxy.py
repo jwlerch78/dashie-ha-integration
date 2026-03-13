@@ -150,10 +150,18 @@ class DashieMjpegStreamView(HomeAssistantView):
 
             cmd = _build_ffmpeg_cmd(stream_source, fps, quality, width, hw_accel)
             _LOGGER.debug("FFmpeg cmd: %s", " ".join(_redact_url(c) for c in cmd))
+
+            # Write stderr to a temp file so it never blocks FFmpeg
+            # and we get the FULL output for diagnostics.
+            import tempfile
+            stderr_file = tempfile.NamedTemporaryFile(
+                prefix=f"ffmpeg_{entity_id.replace('.', '_')}_",
+                suffix=".log", delete=False, mode="w+b",
+            )
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=stderr_file,
             )
 
             try:
@@ -162,17 +170,17 @@ class DashieMjpegStreamView(HomeAssistantView):
                     _LOGGER.debug("Client disconnected from MJPEG stream: %s", entity_id)
                     break
 
-                # FFmpeg exited on its own — log reason and reconnect
-                stderr_data = b""
-                try:
-                    stderr_data = await asyncio.wait_for(process.stderr.read(), timeout=2)
-                except asyncio.TimeoutError:
-                    pass
+                # FFmpeg exited on its own — read stderr from file
+                stderr_file.seek(0)
+                stderr_data = stderr_file.read()
+                stderr_text = _redact_url(stderr_data.decode(errors="replace"))
+                # Log last 2000 chars to see actual errors, not just SEI noise
                 _LOGGER.debug(
-                    "FFmpeg exited for %s (code=%s): %s",
+                    "FFmpeg exited for %s (code=%s, stderr=%d bytes): %s",
                     entity_id,
                     process.returncode,
-                    _redact_url(stderr_data.decode(errors="replace")[:300]),
+                    len(stderr_data),
+                    stderr_text[-2000:],
                 )
                 reconnects += 1
 
@@ -183,6 +191,11 @@ class DashieMjpegStreamView(HomeAssistantView):
                 _LOGGER.exception("Error streaming MJPEG for %s", entity_id)
                 break
             finally:
+                stderr_file.close()
+                try:
+                    os.unlink(stderr_file.name)
+                except OSError:
+                    pass
                 try:
                     process.kill()
                 except ProcessLookupError:
@@ -304,7 +317,7 @@ def _build_ffmpeg_cmd(
         # NOTE: do NOT use -flags low_delay — it disables the H.264
         # reorder buffer, causing duplicate frame output with B-frame
         # streams (Tapo cameras use B-frames for quality).
-        "-fflags", "+nobuffer+flush_packets+discardcorrupt",
+        "-fflags", "+nobuffer+flush_packets+discardcorrupt+genpts",
         # Ignore malformed/truncated SEI NAL units (e.g. vendor-specific
         # SEI type 764 from consumer cameras) instead of treating them
         # as fatal errors that crash the process.
@@ -341,18 +354,23 @@ def _build_ffmpeg_cmd(
         "-analyzeduration", "500000",
         "-probesize", "500000",
         "-i", stream_source,
+        # Strip SEI NAL units (type 6). Consumer cameras (Tapo) embed
+        # proprietary SEI (type 764) that can cause decoder warnings.
+        "-bsf:v", "filter_units=remove_types=6",
     ])
 
-    # Video filters: scale only (no pacing/fps filters).
-    # FFmpeg reads RTSP at network rate and decodes instantly.
-    # Python-side jitter buffer with pre-fill + fractional skip accumulator
-    # handles all rate smoothing (e.g. 20fps bursty → 10fps steady output).
+    # Video filters: scale + setpts for monotonic timestamps.
+    # FFmpeg 7.x MJPEG encoder rejects non-monotonic PTS from B-frame
+    # reordering (Tapo cameras). setpts=N*100000 assigns each frame a
+    # large, unique PTS that survives any timebase conversion (the MJPEG
+    # encoder may use a coarser TB than the input's 1/90000).
+    # Python-side jitter buffer handles all rate smoothing.
     if hw_accel == "vaapi":
         vf_parts = []
         if width:
             vf_parts.append(f"scale_vaapi=w={width}:h=-1")
-        if vf_parts:
-            cmd.extend(["-vf", ",".join(vf_parts)])
+        vf_parts.append("setpts=N*100000")
+        cmd.extend(["-vf", ",".join(vf_parts)])
         cmd.extend([
             "-c:v", "mjpeg_vaapi",
             "-global_quality", str(min(quality * 10, 100)),
@@ -362,33 +380,31 @@ def _build_ffmpeg_cmd(
         if width:
             vf_parts.append(f"scale_cuda={width}:-1")
         vf_parts.extend(["hwdownload", "format=nv12"])
+        vf_parts.append("setpts=N*100000")
         cmd.extend(["-vf", ",".join(vf_parts)])
         cmd.extend([
             "-c:v", "mjpeg",
             "-q:v", str(quality),
         ])
     else:
-        vf_parts = []
+        vf_parts = ["setpts=N*100000"]
         if width:
-            vf_parts.append(f"scale={width}:-1")
-        if vf_parts:
-            cmd.extend(["-vf", ",".join(vf_parts)])
+            vf_parts.insert(0, f"scale={width}:-1")
+        cmd.extend(["-vf", ",".join(vf_parts)])
         cmd.extend([
             "-c:v", "mjpeg",
             "-q:v", str(quality),
         ])
 
     # Common output options
-    # -vsync 0 (passthrough): output every decoded frame exactly once.
-    # Without this, FFmpeg's default cfr mode duplicates frames to fill
-    # timestamp gaps (e.g. between Tapo camera GOP bursts), producing
-    # ~35% byte-identical "duplicates". -vsync vfr is too aggressive
-    # and drops legitimate frames (~7fps instead of ~20fps). Passthrough
-    # gives us all real frames for the Python jitter buffer to manage.
+    # -fps_mode passthrough: output every decoded frame exactly once.
+    # setpts=N*100000 ensures each frame has a unique, monotonically
+    # increasing PTS that won't collapse during timebase conversion.
+    # Python-side jitter buffer handles all rate smoothing.
     cmd.extend([
-        "-vsync", "0",
+        "-fps_mode", "passthrough",
         "-an",
-        "-f", "image2pipe",
+        "-f", "mjpeg",
         "-",
     ])
 
