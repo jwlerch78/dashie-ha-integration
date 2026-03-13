@@ -21,6 +21,7 @@ import asyncio
 import collections
 import logging
 import os
+import re
 import shutil
 import time
 
@@ -52,6 +53,14 @@ SKIP_ACCUM_WINDOW = 5.0  # Seconds over which to measure input fps for skip rati
 _hw_accel: str | None = None  # None = not yet detected
 _vaapi_device: str | None = None  # e.g. /dev/dri/renderD128
 
+# Regex to match credentials in RTSP URLs: rtsp://user:pass@host
+_RTSP_CRED_RE = re.compile(r"(rtsp://)([^@]+)@", re.IGNORECASE)
+
+
+def _redact_url(url: str) -> str:
+    """Redact credentials from RTSP URLs for safe logging."""
+    return _RTSP_CRED_RE.sub(r"\1****:****@", url)
+
 
 class DashieMjpegStreamView(HomeAssistantView):
     """Serve real-time MJPEG stream for any HA camera entity."""
@@ -75,7 +84,7 @@ class DashieMjpegStreamView(HomeAssistantView):
         if direct_source:
             # Direct RTSP URL provided — skip entity resolution
             stream_source = direct_source
-            _LOGGER.info("Using direct stream source: %s", stream_source)
+            _LOGGER.debug("Using direct stream source: %s", _redact_url(stream_source))
         else:
             # Validate entity exists
             state = hass.states.get(entity_id)
@@ -87,7 +96,7 @@ class DashieMjpegStreamView(HomeAssistantView):
             # Resolve stream source URL via camera platform
             stream_source = await _get_stream_source(hass, entity_id)
         if not stream_source:
-            _LOGGER.warning("No stream source for %s", entity_id)
+            _LOGGER.debug("No stream source for %s", entity_id)
             return web.json_response(
                 {"error": f"No stream source available for '{entity_id}'"}, status=503
             )
@@ -95,9 +104,9 @@ class DashieMjpegStreamView(HomeAssistantView):
         # Detect hardware acceleration (cached after first check)
         hw_accel = await _detect_hw_accel()
 
-        _LOGGER.info(
+        _LOGGER.debug(
             "Starting MJPEG proxy: %s → %s (fps=%d, q=%d, w=%s, hw=%s)",
-            entity_id, stream_source, fps, quality, width or "native", hw_accel,
+            entity_id, _redact_url(stream_source), fps, quality, width or "native", hw_accel,
         )
 
         # Prepare streaming response
@@ -125,7 +134,7 @@ class DashieMjpegStreamView(HomeAssistantView):
         while reconnects <= MAX_RECONNECTS:
             # Re-resolve stream source on reconnect (URLs can expire)
             if reconnects > 0:
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Reconnecting MJPEG proxy for %s (attempt %d/%d)",
                     entity_id, reconnects, MAX_RECONNECTS,
                 )
@@ -136,11 +145,11 @@ class DashieMjpegStreamView(HomeAssistantView):
                 else:
                     stream_source = await _get_stream_source(hass, entity_id)
                     if not stream_source:
-                        _LOGGER.warning("No stream source on reconnect for %s", entity_id)
+                        _LOGGER.debug("No stream source on reconnect for %s", entity_id)
                         break
 
             cmd = _build_ffmpeg_cmd(stream_source, fps, quality, width, hw_accel)
-            _LOGGER.info("FFmpeg cmd: %s", " ".join(cmd))
+            _LOGGER.debug("FFmpeg cmd: %s", " ".join(_redact_url(c) for c in cmd))
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -159,11 +168,11 @@ class DashieMjpegStreamView(HomeAssistantView):
                     stderr_data = await asyncio.wait_for(process.stderr.read(), timeout=2)
                 except asyncio.TimeoutError:
                     pass
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "FFmpeg exited for %s (code=%s): %s",
                     entity_id,
                     process.returncode,
-                    stderr_data.decode(errors="replace")[:300],
+                    _redact_url(stderr_data.decode(errors="replace")[:300]),
                 )
                 reconnects += 1
 
@@ -180,7 +189,7 @@ class DashieMjpegStreamView(HomeAssistantView):
                     pass
                 await process.wait()
 
-        _LOGGER.info(
+        _LOGGER.debug(
             "MJPEG proxy ended for %s (reconnects=%d)", entity_id, reconnects
         )
         return response
@@ -195,15 +204,15 @@ async def _get_stream_source(hass: HomeAssistant, entity_id: str) -> str | None:
 
     entity = camera_component.get_entity(entity_id)
     if entity is None:
-        _LOGGER.warning("Camera entity not found in component: %s", entity_id)
+        _LOGGER.debug("Camera entity not found in component: %s", entity_id)
         return None
 
     if not hasattr(entity, "stream_source"):
-        _LOGGER.warning("Camera entity has no stream_source: %s", entity_id)
+        _LOGGER.debug("Camera entity has no stream_source: %s", entity_id)
         return None
 
     source = await entity.stream_source()
-    _LOGGER.info("Stream source for %s: %s", entity_id, source)
+    _LOGGER.debug("Stream source for %s: %s", entity_id, _redact_url(source) if source else None)
     return source
 
 
@@ -225,7 +234,7 @@ async def _detect_hw_accel() -> str:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         _hw_accel = "software"
-        _LOGGER.warning("FFmpeg not found — using software encoding")
+        _LOGGER.debug("FFmpeg not found — using software encoding")
         return _hw_accel
 
     # Check for VAAPI (Intel iGPU) — look for render node + test mjpeg_vaapi
@@ -295,7 +304,11 @@ def _build_ffmpeg_cmd(
         # NOTE: do NOT use -flags low_delay — it disables the H.264
         # reorder buffer, causing duplicate frame output with B-frame
         # streams (Tapo cameras use B-frames for quality).
-        "-fflags", "+nobuffer+flush_packets",
+        "-fflags", "+nobuffer+flush_packets+discardcorrupt",
+        # Ignore malformed/truncated SEI NAL units (e.g. vendor-specific
+        # SEI type 764 from consumer cameras) instead of treating them
+        # as fatal errors that crash the process.
+        "-err_detect", "ignore_err",
     ]
 
     # Hardware-accelerated decode options
@@ -478,7 +491,7 @@ async def _pipe_frames_to_response(
         if prefill_elapsed > 0 and len(frame_buf) > 1:
             # All frames (including visual dups) enter buffer now
             observed_in_fps = len(frame_buf) / prefill_elapsed
-        _LOGGER.info(
+        _LOGGER.debug(
             "MJPEG [%s]: pre-fill complete, %d unique frames in %.0fms "
             "(%d total, %d dups), unique_fps=%.1f, skip_ratio=%.2f",
             entity_id, len(frame_buf), prefill_elapsed * 1000,
@@ -560,7 +573,7 @@ async def _pipe_frames_to_response(
                 t_after = time.monotonic()
                 write_ms = (t_after - t_before) * 1000
                 if write_ms > 20:  # Log slow writes
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "MJPEG [%s]: SLOW write+drain: %.1fms (frame=%d bytes)",
                         entity_id, write_ms, len(frame_data),
                     )
@@ -598,7 +611,7 @@ async def _pipe_frames_to_response(
                 size_info = ""
                 if stats["dup_bytes"] > 0 or stats["unique_bytes"] > 0:
                     size_info = f", dup_sz={stats['dup_bytes']//1024}KB, uniq_sz={stats['unique_bytes']//1024}KB"
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "MJPEG [%s]: total_in=%.1f, unique_in=%.1f, out=%.1f fps, "
                     "buf=%d, skips=%d, holds=%d, dups=%d, drops=%d, ratio=%.2f%s%s%s",
                     entity_id,

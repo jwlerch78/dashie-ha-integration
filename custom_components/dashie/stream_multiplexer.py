@@ -26,6 +26,7 @@ from .stream_proxy import (
     _build_ffmpeg_cmd,
     _detect_hw_accel,
     _get_stream_source,
+    _redact_url,
     DEFAULT_FPS,
     MAX_RECONNECTS,
     READ_CHUNK_SIZE,
@@ -67,7 +68,7 @@ class _SharedStream:
         if self._grace_task and not self._grace_task.done():
             self._grace_task.cancel()
             self._grace_task = None
-        _LOGGER.info(
+        _LOGGER.debug(
             "Subscriber %d joined feed %s (total: %d)",
             sub_id, self.feed_id, len(self._subscribers),
         )
@@ -77,7 +78,7 @@ class _SharedStream:
         """Remove a subscriber. Returns remaining subscriber count."""
         self._subscribers.pop(sub_id, None)
         remaining = len(self._subscribers)
-        _LOGGER.info(
+        _LOGGER.debug(
             "Subscriber %d left feed %s (remaining: %d)",
             sub_id, self.feed_id, remaining,
         )
@@ -113,7 +114,7 @@ class _SharedStream:
         async def _delayed_stop():
             await asyncio.sleep(GRACE_PERIOD)
             if not self._subscribers:
-                _LOGGER.info("Grace period expired, stopping feed %s", self.feed_id)
+                _LOGGER.debug("Grace period expired, stopping feed %s", self.feed_id)
                 await self.stop()
 
         self._grace_task = asyncio.ensure_future(_delayed_stop())
@@ -123,7 +124,7 @@ class _SharedStream:
         reconnects = 0
         while self._running and reconnects <= MAX_RECONNECTS:
             if reconnects > 0:
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Reconnecting feed %s (attempt %d/%d)",
                     self.feed_id, reconnects, MAX_RECONNECTS,
                 )
@@ -144,7 +145,7 @@ class _SharedStream:
                 width=str(feed["resolution"]) if feed.get("resolution") else None,
                 hw_accel=hw_accel,
             )
-            _LOGGER.info("Feed %s FFmpeg cmd: %s", self.feed_id, " ".join(cmd))
+            _LOGGER.debug("Feed %s FFmpeg cmd: %s", self.feed_id, " ".join(_redact_url(c) for c in cmd))
 
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -164,11 +165,11 @@ class _SharedStream:
                     )
                 except asyncio.TimeoutError:
                     pass
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "FFmpeg exited for feed %s (code=%s): %s",
                     self.feed_id,
                     self._process.returncode,
-                    stderr_data.decode(errors="replace")[:300],
+                    _redact_url(stderr_data.decode(errors="replace")[:300]),
                 )
                 reconnects += 1
             except asyncio.CancelledError:
@@ -180,7 +181,7 @@ class _SharedStream:
                 await self._kill_process()
 
         self._running = False
-        _LOGGER.info("Feed %s stream ended (reconnects=%d)", self.feed_id, reconnects)
+        _LOGGER.debug("Feed %s stream ended (reconnects=%d)", self.feed_id, reconnects)
 
     async def _resolve_source(self) -> str | None:
         """Resolve stream source from feed definition."""
@@ -247,7 +248,7 @@ class _SharedStream:
                 now = time.monotonic()
                 if now - log_time >= 10.0:
                     elapsed = now - log_time
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         "Feed %s: in=%.1f fps, out=%.1f fps/sub, subs=%d, drops=%d",
                         self.feed_id,
                         stats["in"] / elapsed,

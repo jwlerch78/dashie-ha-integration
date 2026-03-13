@@ -116,7 +116,7 @@ class DashieCoordinator(DataUpdateCoordinator):
             self._consecutive_failures == MEDIUM_BACKOFF_THRESHOLD + 1 or
             self._consecutive_failures == MAX_BACKOFF_THRESHOLD + 1 or
             self._consecutive_failures % 10 == 0):
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Device %s unreachable (attempt #%d), polling interval: %ds",
                 self.host, self._consecutive_failures, new_interval
             )
