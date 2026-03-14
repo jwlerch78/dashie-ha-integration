@@ -24,7 +24,7 @@ class DashieEntity(CoordinatorEntity[DashieCoordinator]):
         data = self.coordinator.data or {}
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
-            name=data.get("deviceName", "Dashie Lite"),
+            name=data.get("deviceName", "Dashie"),
             manufacturer="Dashie",
             model=data.get("deviceModel", "Tablet"),
             sw_version=data.get("appVersionName"),

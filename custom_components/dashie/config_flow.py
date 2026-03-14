@@ -247,9 +247,10 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     def _get_display_name(self, base_name: str) -> str:
-        """Get display name, appending ' Lite' for Dashie Lite devices."""
-        if self._is_dashie_lite and not base_name.lower().endswith("lite"):
-            return f"{base_name} Lite"
+        """Get display name for the device."""
+        # Strip legacy " Lite" suffix if present
+        if base_name.endswith(" Lite"):
+            base_name = base_name[:-5]
         return base_name
 
     async def _fetch_device_info(self) -> dict:
