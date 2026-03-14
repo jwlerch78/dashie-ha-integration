@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.event import async_track_time_interval
 
@@ -99,6 +100,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # and resets our backoff counter). The entry stays loaded even if the device is
     # temporarily unreachable.
     await coordinator.async_refresh()
+
+    # Auto-remove ghost entries: if the first poll failed and this entry has
+    # never successfully connected (no device in the device registry), it's
+    # likely an orphaned config entry from a failed deletion. Remove it.
+    if not coordinator.last_update_success:
+        device_registry = dr.async_get(hass)
+        devices = dr.async_entries_for_config_entry(device_registry, entry.entry_id)
+        if not devices:
+            _LOGGER.warning(
+                "Removing orphaned Dashie config entry for %s (%s) — "
+                "device never connected successfully",
+                entry.title, host,
+            )
+            hass.async_create_task(
+                hass.config_entries.async_remove(entry.entry_id)
+            )
+            return True
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
