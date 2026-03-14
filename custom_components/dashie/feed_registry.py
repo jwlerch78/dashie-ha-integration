@@ -155,6 +155,15 @@ class FeedRegistry:
         _LOGGER.debug("Subscription updated for device %s", device_id)
         return self.get_subscription(device_id)
 
+    async def async_remove_subscription(self, device_id: str) -> bool:
+        """Remove a device's subscription (e.g. when device is deleted)."""
+        if device_id not in self._data["subscriptions"]:
+            return False
+        del self._data["subscriptions"][device_id]
+        await self._async_save()
+        _LOGGER.info("Subscription removed for deleted device %s", device_id)
+        return True
+
     # ── Trigger Helpers ──────────────────────────────────────────
 
     @callback

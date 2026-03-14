@@ -51,14 +51,23 @@ class DashieSensorPushView(HomeAssistantView):
                 {"error": "unknown device"}, status=404
             )
 
+        # Device check-in: reset backoff so polling resumes immediately.
+        # Devices can POST {"deviceId": "..."} with no sensor fields as a
+        # lightweight "I'm online" ping (e.g. on app startup).
+        if coordinator._consecutive_failures > 0:
+            _LOGGER.info(
+                "Device %s (%s) checked in, resetting backoff after %d failures",
+                device_id, coordinator.host, coordinator._consecutive_failures,
+            )
+            coordinator._reset_backoff()
+
         # Extract pushable sensor fields
         updates = {
             k: body[k] for k in _PUSHABLE_FIELDS if k in body
         }
         if not updates:
-            return web.json_response(
-                {"error": "no sensor fields provided"}, status=400
-            )
+            # No sensor fields = check-in only, still a success
+            return web.json_response({"status": "ok"})
 
         # Merge into coordinator data and notify entities immediately
         if coordinator.data:

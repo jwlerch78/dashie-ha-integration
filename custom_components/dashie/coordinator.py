@@ -7,6 +7,7 @@ from datetime import timedelta
 
 import aiohttp
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -16,29 +17,38 @@ from .const import DEFAULT_SCAN_INTERVAL, API_DEVICE_INFO
 _LOGGER = logging.getLogger(__name__)
 
 # Backoff configuration for unreachable devices
-# Schedule: 15s for first 4 attempts, 30s for next 8, then 2 min
+# Schedule: 15s for first 4 attempts, 60s for next 8, then 5 min
 NORMAL_INTERVAL = 15
-MEDIUM_BACKOFF = 30
-MAX_BACKOFF = 120
-MEDIUM_BACKOFF_THRESHOLD = 4   # Switch to 30s after 4 failures
-MAX_BACKOFF_THRESHOLD = 12     # Switch to 2 min after 12 failures
+MEDIUM_BACKOFF = 60
+MAX_BACKOFF = 300
+MEDIUM_BACKOFF_THRESHOLD = 4   # Switch to 60s after 4 failures
+MAX_BACKOFF_THRESHOLD = 12     # Switch to 5 min after 12 failures
 
 # HTTP timeouts for local network devices
-HTTP_TIMEOUT = aiohttp.ClientTimeout(total=5, connect=3)
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=8, connect=5)
 
 
 class DashieCoordinator(DataUpdateCoordinator):
     """Coordinator to manage fetching data from Dashie Lite device."""
 
-    def __init__(self, hass: HomeAssistant, host: str, port: int, password: str = "") -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        host: str,
+        port: int,
+        password: str = "",
+        config_entry: ConfigEntry | None = None,
+    ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
-            name="Dashie Lite",
+            name=f"Dashie {host}",
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            config_entry=config_entry,
         )
         self.host = host
+        _LOGGER.debug("Coordinator created for %s (id=%s)", host, id(self))
         self.port = port
         self.password = password
         self.base_url = f"http://{host}:{port}"
@@ -95,6 +105,10 @@ class DashieCoordinator(DataUpdateCoordinator):
 
         Schedule: 15s for first 4 attempts, 30s for next 8, then 2 min.
         """
+        _LOGGER.debug(
+            "Backoff entry for %s: failures=%d, id=%s",
+            self.host, self._consecutive_failures, id(self)
+        )
         self._consecutive_failures += 1
 
         # Determine backoff interval based on failure count
@@ -102,31 +116,28 @@ class DashieCoordinator(DataUpdateCoordinator):
             # First 4 failures: stay at normal 15s interval
             new_interval = NORMAL_INTERVAL
         elif self._consecutive_failures <= MAX_BACKOFF_THRESHOLD:
-            # Failures 5-12: back off to 30s
+            # Failures 5-12: back off to 60s
             new_interval = MEDIUM_BACKOFF
         else:
-            # After 12 failures: back off to 2 minutes
+            # After 12 failures: back off to 5 minutes
             new_interval = MAX_BACKOFF
 
         # Update the coordinator's polling interval
         self.update_interval = timedelta(seconds=new_interval)
 
-        # Only log at threshold transitions or every 10 failures to reduce log spam
-        if (self._consecutive_failures == 1 or
-            self._consecutive_failures == MEDIUM_BACKOFF_THRESHOLD + 1 or
-            self._consecutive_failures == MAX_BACKOFF_THRESHOLD + 1 or
-            self._consecutive_failures % 10 == 0):
-            _LOGGER.debug(
-                "Device %s unreachable (attempt #%d), polling interval: %ds",
-                self.host, self._consecutive_failures, new_interval
-            )
+        _LOGGER.debug(
+            "Device %s unreachable (attempt #%d), polling interval: %ds",
+            self.host, self._consecutive_failures, new_interval
+        )
 
     def _reset_backoff(self) -> None:
         """Reset backoff to normal polling after successful connection."""
         if self._consecutive_failures > 0:
+            import traceback
+            caller = traceback.extract_stack(limit=3)[0].name
             _LOGGER.info(
-                "Reconnected to Dashie device at %s after %d failures",
-                self.host, self._consecutive_failures
+                "Reconnected to Dashie device at %s after %d failures (caller: %s)",
+                self.host, self._consecutive_failures, caller
             )
         self._consecutive_failures = 0
         self.update_interval = timedelta(seconds=DEFAULT_SCAN_INTERVAL)

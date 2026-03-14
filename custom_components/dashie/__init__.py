@@ -91,10 +91,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     port = entry.data[CONF_PORT]
     password = entry.data.get(CONF_PASSWORD, "")
 
-    coordinator = DashieCoordinator(hass, host, port, password)
+    coordinator = DashieCoordinator(hass, host, port, password, config_entry=entry)
     # Store device_id for feed subscription lookups
     coordinator.device_id = entry.data.get(CONF_DEVICE_ID)
-    await coordinator.async_config_entry_first_refresh()
+    # Use async_refresh() instead of async_config_entry_first_refresh() so that
+    # offline devices don't cause HA to retry setup (which recreates the coordinator
+    # and resets our backoff counter). The entry stays loaded even if the device is
+    # temporarily unreachable.
+    await coordinator.async_refresh()
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -535,8 +539,21 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
+    # Always shut down the coordinator first — even if platform unload fails,
+    # we must stop polling and close the HTTP session to prevent ghost devices.
+    coordinator: DashieCoordinator | None = hass.data[DOMAIN].get(entry.entry_id)
+    if coordinator:
+        await coordinator.async_shutdown()
+
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
+        _LOGGER.warning(
+            "Platform unload incomplete for %s (%s), cleaning up anyway",
+            entry.title, entry.data.get(CONF_HOST),
+        )
+
+    # Always remove the coordinator from hass.data regardless of platform unload
+    hass.data[DOMAIN].pop(entry.entry_id, None)
 
     # Unregister services if no more entries
     remaining_coordinators = [
@@ -562,4 +579,28 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if multiplexer:
             await multiplexer.async_shutdown()
 
-    return unload_ok
+    # Always return True so HA completes the deletion and removes from storage
+    return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Clean up after a config entry is fully removed.
+
+    Called by HA after async_unload_entry succeeds and the entry is deleted
+    from storage. Belt-and-suspenders cleanup for any remaining state.
+    """
+    device_id = entry.data.get(CONF_DEVICE_ID)
+    host = entry.data.get(CONF_HOST)
+
+    # Clean up orphaned feed registry subscriptions for this device
+    registry = hass.data.get(DOMAIN, {}).get("feed_registry")
+    if registry and device_id:
+        sub = registry.get_subscription(device_id)
+        if sub and sub.get("feed_modes"):
+            _LOGGER.info(
+                "Removing feed subscriptions for deleted device %s (%s)",
+                device_id, host,
+            )
+            await registry.async_remove_subscription(device_id)
+
+    _LOGGER.info("Cleaned up removed Dashie device %s (%s)", device_id, host)
