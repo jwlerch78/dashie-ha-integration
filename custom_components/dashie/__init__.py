@@ -110,9 +110,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not devices:
             _LOGGER.warning(
                 "Removing orphaned Dashie config entry for %s (%s) — "
-                "device never connected successfully",
+                "device is unreachable and has no registered entities",
                 entry.title, host,
             )
+            # Mark as ghost so async_unload_entry skips platform unload
+            hass.data.setdefault(DOMAIN, {})
+            hass.data[DOMAIN][f"{entry.entry_id}_ghost"] = True
             hass.async_create_task(
                 hass.config_entries.async_remove(entry.entry_id)
             )
@@ -557,21 +560,26 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # Ghost entries (auto-removed orphans) never set up platforms — skip unload
+    ghost_key = f"{entry.entry_id}_ghost"
+    is_ghost = hass.data.get(DOMAIN, {}).pop(ghost_key, False)
+
     # Always shut down the coordinator first — even if platform unload fails,
     # we must stop polling and close the HTTP session to prevent ghost devices.
-    coordinator: DashieCoordinator | None = hass.data[DOMAIN].get(entry.entry_id)
+    coordinator: DashieCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if coordinator:
         await coordinator.async_shutdown()
 
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if not unload_ok:
-        _LOGGER.warning(
-            "Platform unload incomplete for %s (%s), cleaning up anyway",
-            entry.title, entry.data.get(CONF_HOST),
-        )
+    if not is_ghost:
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        if not unload_ok:
+            _LOGGER.warning(
+                "Platform unload incomplete for %s (%s), cleaning up anyway",
+                entry.title, entry.data.get(CONF_HOST),
+            )
 
     # Always remove the coordinator from hass.data regardless of platform unload
-    hass.data[DOMAIN].pop(entry.entry_id, None)
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
 
     # Unregister services if no more entries
     remaining_coordinators = [
