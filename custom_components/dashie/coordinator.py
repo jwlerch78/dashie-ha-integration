@@ -179,6 +179,11 @@ class DashieCoordinator(DataUpdateCoordinator):
             if data.get("status") == "ERROR":
                 raise UpdateFailed(data.get("message", "Unknown error"))
 
+        # Populate device_id from device info (needed for feed trigger subscriptions)
+        if not self.device_id and data.get("deviceID"):
+            self.device_id = data["deviceID"]
+            _LOGGER.debug("Device ID set to %s for %s", self.device_id, self.host)
+
         # On first refresh, skip RTSP calls to speed up initial connection.
         # RTSP data will be populated on the next poll cycle (5s later).
         if self._is_first_refresh:
