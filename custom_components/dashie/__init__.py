@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.event import async_track_time_interval
 
@@ -102,12 +102,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_refresh()
 
     # Auto-remove ghost entries: if the first poll failed and this entry has
-    # never successfully connected (no device in the device registry), it's
-    # likely an orphaned config entry from a failed deletion. Remove it.
+    # no entities in the entity registry, it's likely an orphaned config entry
+    # from a failed deletion. Disabled entities still count — we only remove
+    # entries with zero entities.
     if not coordinator.last_update_success:
-        device_registry = dr.async_get(hass)
-        devices = dr.async_entries_for_config_entry(device_registry, entry.entry_id)
-        if not devices:
+        entity_registry = er.async_get(hass)
+        entities = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+        if not entities:
             _LOGGER.warning(
                 "Removing orphaned Dashie config entry for %s (%s) — "
                 "device is unreachable and has no registered entities",
