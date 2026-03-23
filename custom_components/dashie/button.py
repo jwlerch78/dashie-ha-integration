@@ -13,6 +13,7 @@ from .const import (
     API_LOAD_START_URL,
     API_BRING_TO_FOREGROUND,
     API_RESTART_APP,
+    API_REBOOT_DEVICE,
     API_CLEAR_CACHE,
     API_CLEAR_WEBSTORAGE,
     API_REFRESH_WEBVIEW,
@@ -37,6 +38,7 @@ async def async_setup_entry(
         # Maintenance buttons (CONFIG category)
         DashieRefreshWebViewButton(coordinator, device_id),
         DashieRestartButton(coordinator, device_id),
+        DashieRebootButton(coordinator, device_id),
         DashieClearCacheButton(coordinator, device_id),
         DashieClearStorageButton(coordinator, device_id),
     ]
@@ -117,6 +119,24 @@ class DashieRestartButton(DashieEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Restart the app."""
         await self.coordinator.send_command(API_RESTART_APP)
+
+
+class DashieRebootButton(DashieEntity, ButtonEntity):
+    """Reboot device button. Requires root or system app installation."""
+
+    _attr_icon = "mdi:restart-alert"
+    _attr_translation_key = "reboot_device"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_reboot_device"
+        self._attr_name = "Reboot Device"
+
+    async def async_press(self) -> None:
+        """Reboot the device."""
+        await self.coordinator.send_command(API_REBOOT_DEVICE)
 
 
 class DashieClearCacheButton(DashieEntity, ButtonEntity):

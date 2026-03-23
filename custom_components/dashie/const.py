@@ -43,6 +43,7 @@ API_LOAD_URL = "loadUrl"
 # App Control
 API_BRING_TO_FOREGROUND = "toForeground"
 API_RESTART_APP = "restartApp"
+API_REBOOT_DEVICE = "rebootDevice"
 API_EXIT_APP = "exitApp"
 
 # Kiosk Lock

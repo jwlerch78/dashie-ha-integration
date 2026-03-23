@@ -90,11 +90,11 @@
       }
     },
     "text": {
-      "load_url": {
-        "name": "Load URL"
-      },
       "pin": {
         "name": "Lock PIN"
+      },
+      "load_url": {
+        "name": "Load URL"
       }
     },
     "button": {

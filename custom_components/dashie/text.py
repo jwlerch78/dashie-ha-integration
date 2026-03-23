@@ -15,6 +15,7 @@ from .const import (
     API_SET_PIN,
     API_CLEAR_PIN,
     API_SET_STRING_SETTING,
+    API_LOAD_URL,
     SETTING_HA_URL,
 )
 from .coordinator import DashieCoordinator
@@ -37,6 +38,7 @@ async def async_setup_entry(
         # CONTROLS (Primary - no category)
         # =================================================================
         DashiePinText(coordinator, device_id),
+        DashieLoadUrlText(coordinator, device_id),
 
         # =================================================================
         # CONFIGURATION (CONFIG category)
@@ -80,6 +82,40 @@ class DashieDashboardUrlText(DashieEntity, TextEntity):
             await self.coordinator.send_command(
                 API_SET_STRING_SETTING, key=SETTING_HA_URL, value=value
             )
+            await self.coordinator.async_request_refresh()
+
+
+class DashieLoadUrlText(DashieEntity, TextEntity):
+    """Load URL text input — navigates the HA iframe to a URL.
+
+    Shows the current page URL as state. Setting a value navigates
+    the HA iframe: HA paths (starting with /) use SPA navigation,
+    external URLs use full navigation.
+    """
+
+    _attr_mode = TextMode.TEXT
+    _attr_icon = "mdi:web"
+    _attr_translation_key = "load_url"
+    # Primary control (no EntityCategory) — shown in Controls section
+    _attr_native_max = 500
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the text entity."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_load_url"
+        self._attr_name = "Load URL"
+
+    @property
+    def native_value(self) -> str:
+        """Return the current page URL."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("currentPage", "")
+        return ""
+
+    async def async_set_value(self, value: str) -> None:
+        """Navigate the HA iframe to the given URL."""
+        if value:
+            await self.coordinator.send_command(API_LOAD_URL, url=value)
             await self.coordinator.async_request_refresh()
 
 

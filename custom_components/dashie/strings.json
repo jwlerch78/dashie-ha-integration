@@ -104,11 +104,11 @@
       }
     },
     "text": {
-      "load_url": {
-        "name": "Load URL"
-      },
       "pin": {
         "name": "Lock PIN"
+      },
+      "load_url": {
+        "name": "Load URL"
       }
     },
     "button": {
@@ -120,6 +120,9 @@
       },
       "refresh_webview": {
         "name": "Refresh WebView"
+      },
+      "reboot_device": {
+        "name": "Reboot Device"
       }
     },
     "number": {
