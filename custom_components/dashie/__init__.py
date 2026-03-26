@@ -29,6 +29,7 @@ from .const import CONF_DEVICE_ID
 from .coordinator import DashieCoordinator
 from .feed_registry import FeedRegistry, register_feed_registry_views
 from .media_api import register_media_api_views
+from .music_token_store import MusicTokenStore, register_music_token_views
 from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .stream_proxy import register_stream_proxy_views
@@ -74,6 +75,7 @@ _media_api_registered = False
 _stream_proxy_registered = False
 _feed_registry_registered = False
 _multiplexer_registered = False
+_music_token_registered = False
 _sensor_push_registered = False
 
 
@@ -87,6 +89,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie Lite from a config entry."""
     global _media_api_registered, _stream_proxy_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
+    global _music_token_registered
 
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
@@ -158,6 +161,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_feed_registry_views(hass)
         _feed_registry_registered = True
         _LOGGER.info("Registered Dashie feed registry views")
+
+    # Initialize music token store (only once)
+    if "music_token_store" not in hass.data[DOMAIN]:
+        music_store = MusicTokenStore(hass)
+        await music_store.async_load()
+        hass.data[DOMAIN]["music_token_store"] = music_store
+        _LOGGER.info("Initialized Dashie music token store")
+
+    if not _music_token_registered:
+        register_music_token_views(hass)
+        _music_token_registered = True
+        _LOGGER.info("Registered Dashie music token views")
 
     if not _multiplexer_registered:
         register_stream_multiplexer_views(hass)
