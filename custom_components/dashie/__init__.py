@@ -30,6 +30,7 @@ from .coordinator import DashieCoordinator
 from .feed_registry import FeedRegistry, register_feed_registry_views
 from .media_api import register_media_api_views
 from .music_token_store import MusicTokenStore, register_music_token_views
+from .music_relay import register_music_relay_views
 from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .stream_proxy import register_stream_proxy_views
@@ -76,6 +77,7 @@ _stream_proxy_registered = False
 _feed_registry_registered = False
 _multiplexer_registered = False
 _music_token_registered = False
+_music_relay_registered = False
 _sensor_push_registered = False
 
 
@@ -89,7 +91,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie Lite from a config entry."""
     global _media_api_registered, _stream_proxy_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
-    global _music_token_registered
+    global _music_token_registered, _music_relay_registered
 
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
@@ -173,6 +175,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_music_token_views(hass)
         _music_token_registered = True
         _LOGGER.info("Registered Dashie music token views")
+
+    if not _music_relay_registered:
+        register_music_relay_views(hass)
+        _music_relay_registered = True
+        _LOGGER.info("Registered Dashie music relay views")
 
     if not _multiplexer_registered:
         register_stream_multiplexer_views(hass)
