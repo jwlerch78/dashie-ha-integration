@@ -31,6 +31,7 @@ from .feed_registry import FeedRegistry, register_feed_registry_views
 from .media_api import register_media_api_views
 from .music_token_store import MusicTokenStore, register_music_token_views
 from .music_relay import register_music_relay_views
+from .hidden_speakers_store import HiddenSpeakersStore, register_hidden_speakers_views
 from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .stream_proxy import register_stream_proxy_views
@@ -175,6 +176,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_music_token_views(hass)
         _music_token_registered = True
         _LOGGER.info("Registered Dashie music token views")
+
+    # Initialize hidden speakers store (only once)
+    if "hidden_speakers_store" not in hass.data[DOMAIN]:
+        hidden_store = HiddenSpeakersStore(hass)
+        await hidden_store.async_load()
+        hass.data[DOMAIN]["hidden_speakers_store"] = hidden_store
+        _LOGGER.info("Initialized Dashie hidden speakers store")
+
+    if not getattr(register_hidden_speakers_views, '_registered', False):
+        register_hidden_speakers_views(hass)
+        register_hidden_speakers_views._registered = True
+        _LOGGER.info("Registered Dashie hidden speakers views")
 
     if not _music_relay_registered:
         register_music_relay_views(hass)
