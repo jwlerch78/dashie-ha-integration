@@ -34,6 +34,7 @@ from .music_relay import register_music_relay_views
 from .hidden_speakers_store import HiddenSpeakersStore, register_hidden_speakers_views
 from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
+from .device_name_views import register_device_name_views
 from .stream_proxy import register_stream_proxy_views
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ _multiplexer_registered = False
 _music_token_registered = False
 _music_relay_registered = False
 _sensor_push_registered = False
+_device_name_registered = False
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -92,7 +94,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie Lite from a config entry."""
     global _media_api_registered, _stream_proxy_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
-    global _music_token_registered, _music_relay_registered
+    global _music_token_registered, _music_relay_registered, _device_name_registered
 
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
@@ -203,6 +205,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_sensor_push_views(hass)
         _sensor_push_registered = True
         _LOGGER.info("Registered Dashie sensor push endpoint")
+
+    if not _device_name_registered:
+        register_device_name_views(hass)
+        _device_name_registered = True
+        _LOGGER.info("Registered Dashie device name views")
 
     # Set up centralized feed trigger subscriptions
     registry = hass.data[DOMAIN]["feed_registry"]
