@@ -35,12 +35,17 @@ class DashieDeviceNamesView(HomeAssistantView):
 
         devices = []
         for device in device_registry.devices.values():
-            if not any(id_tuple[0] == DOMAIN for id_tuple in device.identifiers):
+            dashie_ids = [
+                id_tuple[1] for id_tuple in device.identifiers
+                if id_tuple[0] == DOMAIN
+            ]
+            if not dashie_ids:
                 continue
             devices.append({
                 "device_id": device.id,
                 "name": device.name_by_user or device.name or "",
                 "model": device.model or "",
+                "android_id": dashie_ids[0],
             })
 
         return web.json_response({"devices": devices})
