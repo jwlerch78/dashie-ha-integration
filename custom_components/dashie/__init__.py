@@ -30,6 +30,7 @@ from .coordinator import DashieCoordinator
 from .feed_registry import FeedRegistry, register_feed_registry_views
 from .media_api import register_media_api_views
 from .music_token_store import MusicTokenStore, register_music_token_views
+from .immich_token_store import ImmichTokenStore, register_immich_token_views
 from .music_relay import register_music_relay_views
 from .hidden_speakers_store import HiddenSpeakersStore, register_hidden_speakers_views
 from .sensor_push import register_sensor_push_views
@@ -79,6 +80,7 @@ _stream_proxy_registered = False
 _feed_registry_registered = False
 _multiplexer_registered = False
 _music_token_registered = False
+_immich_token_registered = False
 _music_relay_registered = False
 _sensor_push_registered = False
 _device_name_registered = False
@@ -94,7 +96,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie Lite from a config entry."""
     global _media_api_registered, _stream_proxy_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
-    global _music_token_registered, _music_relay_registered, _device_name_registered
+    global _music_token_registered, _immich_token_registered
+    global _music_relay_registered, _device_name_registered
 
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
@@ -178,6 +181,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_music_token_views(hass)
         _music_token_registered = True
         _LOGGER.info("Registered Dashie music token views")
+
+    # Initialize Immich token store (only once)
+    if "immich_token_store" not in hass.data[DOMAIN]:
+        immich_store = ImmichTokenStore(hass)
+        await immich_store.async_load()
+        hass.data[DOMAIN]["immich_token_store"] = immich_store
+        _LOGGER.info("Initialized Dashie Immich token store")
+
+    if not _immich_token_registered:
+        register_immich_token_views(hass)
+        _immich_token_registered = True
+        _LOGGER.info("Registered Dashie Immich token views")
 
     # Initialize hidden speakers store (only once)
     if "hidden_speakers_store" not in hass.data[DOMAIN]:
