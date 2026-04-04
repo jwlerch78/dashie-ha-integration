@@ -1,4 +1,4 @@
-"""Base entity for Dashie Lite integration."""
+"""Base entity for Dashie integration."""
 from __future__ import annotations
 
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -9,7 +9,7 @@ from .coordinator import DashieCoordinator
 
 
 class DashieEntity(CoordinatorEntity[DashieCoordinator]):
-    """Base class for Dashie Lite entities."""
+    """Base class for Dashie entities."""
 
     _attr_has_entity_name = True
 

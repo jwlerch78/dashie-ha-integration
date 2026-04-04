@@ -1,4 +1,4 @@
-"""Sensor entities for Dashie Lite integration."""
+"""Sensor entities for Dashie integration."""
 from __future__ import annotations
 
 from homeassistant.components.sensor import (
@@ -22,7 +22,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Dashie Lite sensors."""
+    """Set up Dashie sensors."""
     coordinator: DashieCoordinator = hass.data[DOMAIN][entry.entry_id]
     device_id = entry.data[CONF_DEVICE_ID]
 
@@ -299,7 +299,7 @@ class DashieAndroidVersionSensor(DashieEntity, SensorEntity):
 
 
 class DashieAppVersionSensor(DashieEntity, SensorEntity):
-    """App version sensor - Dashie Lite version."""
+    """App version sensor - Dashie version."""
 
     _attr_icon = "mdi:application-cog"
     _attr_translation_key = "app_version"

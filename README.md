@@ -1,6 +1,6 @@
-# Dashie Lite - Home Assistant Integration
+# Dashie - Home Assistant Integration
 
-A Home Assistant custom integration for [Dashie Lite](https://www.dashieapp.com/dashie-lite-download), providing auto-discovery and control of Dashie Lite tablets on your network.
+A Home Assistant custom integration for [Dashie](https://www.dashieapp.com), providing auto-discovery and control of Dashie tablets on your network.
 
 ## Features
 
@@ -18,7 +18,7 @@ A Home Assistant custom integration for [Dashie Lite](https://www.dashieapp.com/
 1. Open HACS in your Home Assistant
 2. Click the three dots in the top right → Custom repositories
 3. Add `https://github.com/jwlerch78/dashie-ha-integration` with category "Integration"
-4. Search for "Dashie Lite" and install
+4. Search for "Dashie" and install
 5. Restart Home Assistant
 
 ### Manual Installation
@@ -29,12 +29,12 @@ A Home Assistant custom integration for [Dashie Lite](https://www.dashieapp.com/
 
 ## Setup
 
-Once installed, Dashie Lite devices on your network will be automatically discovered. You'll see a notification in Home Assistant to configure the device.
+Once installed, Dashie devices on your network will be automatically discovered. You'll see a notification in Home Assistant to configure the device.
 
 **Requirements:**
-- Dashie Lite v2.21.0B or later (with SSDP support)
+- Dashie v2.3 or later
 - Device must be on the same network as Home Assistant
-- Fully Kiosk API must be enabled in Dashie Lite settings
+- API must be enabled in Dashie settings
 
 ### SSDP Discovery Not Working?
 
@@ -44,7 +44,7 @@ You can also manually add devices via **Settings > Devices & Services > Add Inte
 
 ## Entities
 
-Each Dashie Lite device creates the following entities:
+Each Dashie device creates the following entities:
 
 ### Sensors
 | Entity | Description |
@@ -92,13 +92,13 @@ Each Dashie Lite device creates the following entities:
    ```
    The `vflip` rotates 180° (stream is already un-mirrored at source). Then use `rtsp://localhost:8554/dashie_camera` as your camera source.
 
-**Technical Details**: Dashie Lite v2.21.9B+ applies a horizontal flip filter using RootEncoder's RotationFilterRender to un-mirror the front camera at the source level. This provides correct orientation in all RTSP clients (VLC, WebRTC, etc.) without relying on metadata tags.
+**Technical Details**: Dashie applies a horizontal flip filter using RootEncoder's RotationFilterRender to un-mirror the front camera at the source level. This provides correct orientation in all RTSP clients (VLC, WebRTC, etc.) without relying on metadata tags.
 
 ## Services
 
 ### `dashie.send_command`
 
-Send a custom command to a Dashie Lite device.
+Send a custom command to a Dashie device.
 
 ```yaml
 service: dashie.send_command
@@ -112,8 +112,8 @@ data:
 
 ### Device not discovered
 
-1. Ensure Dashie Lite is running and connected to your network
-2. Check that the Fully Kiosk API is enabled (Settings → System → Enable API)
+1. Ensure Dashie is running and connected to your network
+2. Check that the API is enabled (Settings → System → Enable API)
 3. Verify the device is on the same network/subnet as Home Assistant
 4. Check Home Assistant logs for SSDP discovery messages
 

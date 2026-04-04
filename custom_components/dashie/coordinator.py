@@ -1,4 +1,4 @@
-"""DataUpdateCoordinator for Dashie Lite."""
+"""DataUpdateCoordinator for Dashie."""
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +29,7 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(total=8, connect=5)
 
 
 class DashieCoordinator(DataUpdateCoordinator):
-    """Coordinator to manage fetching data from Dashie Lite device."""
+    """Coordinator to manage fetching data from Dashie device."""
 
     def __init__(
         self,
@@ -143,7 +143,7 @@ class DashieCoordinator(DataUpdateCoordinator):
         self.update_interval = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
 
     async def _async_update_data(self) -> dict:
-        """Fetch data from Dashie Lite device."""
+        """Fetch data from Dashie device."""
         try:
             async with asyncio.timeout(10):
                 data = await self._fetch_device_info()
@@ -407,7 +407,7 @@ class DashieCoordinator(DataUpdateCoordinator):
         )
 
     async def send_command(self, command: str, **kwargs) -> bool:
-        """Send a command to the Dashie Lite device."""
+        """Send a command to the Dashie device."""
         try:
             session = await self._get_session()
             params = {"cmd": command}

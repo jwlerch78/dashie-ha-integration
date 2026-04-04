@@ -1,4 +1,4 @@
-"""Button entities for Dashie Lite integration."""
+"""Button entities for Dashie integration."""
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
@@ -27,7 +27,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Dashie Lite buttons."""
+    """Set up Dashie buttons."""
     coordinator: DashieCoordinator = hass.data[DOMAIN][entry.entry_id]
     device_id = entry.data[CONF_DEVICE_ID]
 

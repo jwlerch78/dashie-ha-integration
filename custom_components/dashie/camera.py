@@ -1,4 +1,4 @@
-"""Camera entity for Dashie Lite integration."""
+"""Camera entity for Dashie integration."""
 from __future__ import annotations
 
 import asyncio
@@ -33,7 +33,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Dashie Lite camera."""
+    """Set up Dashie camera."""
     coordinator: DashieCoordinator = hass.data[DOMAIN][entry.entry_id]
     device_id = entry.data[CONF_DEVICE_ID]
 
@@ -45,7 +45,7 @@ async def async_setup_entry(
 
 
 class DashieCamera(DashieEntity, Camera):
-    """Camera entity for Dashie Lite device."""
+    """Camera entity for Dashie device."""
 
     _attr_supported_features = CameraEntityFeature.STREAM
     _attr_translation_key = "camera"

@@ -1,4 +1,4 @@
-"""Binary sensor entities for Dashie Lite integration."""
+"""Binary sensor entities for Dashie integration."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
@@ -20,7 +20,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Dashie Lite binary sensors."""
+    """Set up Dashie binary sensors."""
     coordinator: DashieCoordinator = hass.data[DOMAIN][entry.entry_id]
     device_id = entry.data[CONF_DEVICE_ID]
 
@@ -120,7 +120,7 @@ class DashiePinSetSensor(DashieEntity, BinarySensorEntity):
 class DashieDeviceAdminSensor(DashieEntity, BinarySensorEntity):
     """Device Admin enabled binary sensor.
 
-    Indicates whether Dashie Lite has Device Admin permission, which is required
+    Indicates whether Dashie has Device Admin permission, which is required
     for hardware screen off. Without this permission, screenOff falls back to
     a black overlay instead of actually turning off the display hardware.
     """
@@ -154,7 +154,7 @@ class DashieDeviceAdminSensor(DashieEntity, BinarySensorEntity):
         return {
             "description": "Device Admin permission is required for hardware screen off. "
                            "Without it, screenOff uses a black overlay instead.",
-            "how_to_enable": "In Dashie Lite settings, set screensaver mode to 'Screen Off' "
+            "how_to_enable": "In Dashie settings, set screensaver mode to 'Screen Off' "
                              "and grant the permission when prompted.",
         }
 

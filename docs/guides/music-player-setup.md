@@ -1,16 +1,16 @@
-# Setting Up Music Playback on Dashie Lite
+# Setting Up Music Playback on Dashie
 
 *Play Spotify, Pandora, and other music through your tablet speakers*
 
-Dashie Lite tablets make excellent ambient music players for kitchens, offices, and living spaces. This guide shows you how to set up Spotify (or other music services) to play through your tablet's speakers while keeping the Dashie dashboard visible on screen.
+Dashie tablets make excellent ambient music players for kitchens, offices, and living spaces. This guide shows you how to set up Spotify (or other music services) to play through your tablet's speakers while keeping the Dashie dashboard visible on screen.
 
-> ✓ **Good News:** This setup works even when Dashie Lite is locked in kiosk mode. Music plays in the background while your dashboard stays on screen.
+> ✓ **Good News:** This setup works even when Dashie is locked in kiosk mode. Music plays in the background while your dashboard stays on screen.
 
 ---
 
 ## How It Works
 
-Android allows music apps like Spotify to run as background services. When you start playback (from your phone, Home Assistant, or any Spotify Connect device), the music plays through the tablet's speakers even though Dashie Lite is the visible app.
+Android allows music apps like Spotify to run as background services. When you start playback (from your phone, Home Assistant, or any Spotify Connect device), the music plays through the tablet's speakers even though Dashie is the visible app.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -29,10 +29,10 @@ Android allows music apps like Spotify to run as background services. When you s
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Dashie Lite Tablet                                               │
+│  Dashie Tablet                                               │
 │                                                                  │
 │  ┌──────────────────────┐    ┌──────────────────────┐           │
-│  │ Dashie Lite App      │    │ Spotify App          │           │
+│  │ Dashie App      │    │ Spotify App          │           │
 │  │ (Foreground)         │    │ (Background Service) │           │
 │  │                      │    │                      │           │
 │  │ Shows dashboard      │    │ Plays audio ───────────► 🔊     │
@@ -41,7 +41,7 @@ Android allows music apps like Spotify to run as background services. When you s
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-The key insight: **Dashie Lite's kiosk mode only prevents switching apps visually**. It doesn't stop background services like music playback from running.
+The key insight: **Dashie's kiosk mode only prevents switching apps visually**. It doesn't stop background services like music playback from running.
 
 ---
 
@@ -49,7 +49,7 @@ The key insight: **Dashie Lite's kiosk mode only prevents switching apps visuall
 
 ### What You'll Need
 
-- Dashie Lite installed on your Android tablet
+- Dashie installed on your Android tablet
 - A Spotify Premium account (for Spotify Connect features)
 - Google Play Store access on the tablet (to install Spotify)
 - Optional: Home Assistant with Spotify integration (for HA dashboard control)
@@ -60,11 +60,11 @@ The key insight: **Dashie Lite's kiosk mode only prevents switching apps visuall
 
 ## Part 1: Install Spotify on Your Tablet
 
-First, we need to install the Spotify app on your Dashie Lite tablet.
+First, we need to install the Spotify app on your Dashie tablet.
 
 ### Step 1: Temporarily Exit Kiosk Mode
 
-If Dashie Lite is locked in kiosk mode, you'll need to exit temporarily. In Dashie Lite, go to **Settings → Kiosk Mode** and tap **Disable Kiosk Lock**.
+If Dashie is locked in kiosk mode, you'll need to exit temporarily. In Dashie, go to **Settings → Kiosk Mode** and tap **Disable Kiosk Lock**.
 
 ### Step 2: Open Google Play Store
 
@@ -78,9 +78,9 @@ Open the Spotify app and sign in with your account. This registers the tablet as
 
 In Spotify settings, you can rename the device to something memorable like "Kitchen Tablet" or "Office Dashboard". This makes it easier to find when selecting playback devices.
 
-### Step 5: Return to Dashie Lite
+### Step 5: Return to Dashie
 
-Open Dashie Lite and re-enable kiosk mode if desired. Spotify will continue running in the background and remain available as a playback target.
+Open Dashie and re-enable kiosk mode if desired. Spotify will continue running in the background and remain available as a playback target.
 
 > ⚠️ **Battery Optimization:** Some tablets aggressively kill background apps to save battery. If music stops unexpectedly, go to **Settings → Apps → Spotify → Battery** and select "Unrestricted" or "Don't optimize".
 
@@ -205,7 +205,7 @@ Spotify has the best Spotify Connect ecosystem, which is why it's the recommende
 
 ## Summary
 
-Setting up music on your Dashie Lite tablet is straightforward:
+Setting up music on your Dashie tablet is straightforward:
 
 1. **Install Spotify** on the tablet and sign in
 2. **Exempt from battery optimization** to prevent background killing
@@ -214,8 +214,8 @@ Setting up music on your Dashie Lite tablet is straightforward:
 
 Your Dashie dashboard stays visible while music plays through the tablet's speakers—the perfect ambient display for any room in your home.
 
-> 💡 **Next Steps:** Check out our [Voice Control Setup Guide](/guides/voice-control-setup) to add voice commands to your Dashie Lite experience, including "Play music on kitchen tablet"!
+> 💡 **Next Steps:** Check out our [Voice Control Setup Guide](/guides/voice-control-setup) to add voice commands to your Dashie experience, including "Play music on kitchen tablet"!
 
 ---
 
-*Need help? [Open an issue](https://github.com/dashieapp/dashie-lite/issues) or email [support@dashieapp.com](mailto:support@dashieapp.com)*
+*Need help? [Open an issue](https://github.com/jwlerch78/dashie-ha-integration/issues) or email [support@dashieapp.com](mailto:support@dashieapp.com)*

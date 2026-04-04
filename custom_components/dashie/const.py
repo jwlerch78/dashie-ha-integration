@@ -1,4 +1,4 @@
-"""Constants for Dashie Lite integration."""
+"""Constants for Dashie integration."""
 
 DOMAIN = "dashie"
 

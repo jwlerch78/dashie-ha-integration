@@ -139,7 +139,7 @@ cat /config/custom_components/dashie/manifest.json | grep version
 
 **Verify via ADB:**
 ```bash
-adb shell "run-as com.dashieapp.Dashie.halite cat /data/data/com.dashieapp.Dashie.halite/shared_prefs/dashie_lite_prefs.xml" | grep api_enabled
+adb shell "run-as com.dashieapp.Dashie cat /data/data/com.dashieapp.Dashie/shared_prefs/dashie_prefs.xml" | grep api_enabled
 ```
 
 Should show: `<boolean name="api_enabled" value="true" />`

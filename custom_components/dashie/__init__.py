@@ -93,7 +93,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Dashie Lite from a config entry."""
+    """Set up Dashie from a config entry."""
     global _media_api_registered, _stream_proxy_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
     global _music_token_registered, _immich_token_registered

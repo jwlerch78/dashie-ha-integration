@@ -1,8 +1,8 @@
 # =============================================================================
-# Dashie Lite Integration Services
+# Dashie Integration Services
 # =============================================================================
 #
-# Services are organized by function to match the Dashie Lite sidebar sections.
+# Services are organized by function to match the Dashie sidebar sections.
 #
 
 
@@ -204,7 +204,7 @@ show_message:
 
 send_command:
   name: Send Command
-  description: Send a low-level command to a Dashie Lite device (for advanced use)
+  description: Send a low-level command to a Dashie device (for advanced use)
   fields:
     device_id:
       name: Device ID

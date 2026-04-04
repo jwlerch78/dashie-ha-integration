@@ -34,7 +34,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._port: int = DEFAULT_PORT
         self._password: str = ""
         self._device_info: dict | None = None
-        self._is_dashie_lite: bool = False
+        self._is_dashie: bool = False
 
     async def async_step_zeroconf(self, discovery_info: Any) -> FlowResult:
         """Handle zeroconf/mDNS discovery."""
@@ -89,7 +89,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.debug("✅ DeviceID not already configured, proceeding to confirm")
 
                 self._device_info["deviceName"] = device_name
-                self._is_dashie_lite = True  # Zeroconf discovery is Dashie Lite only
+                self._is_dashie = True  # Zeroconf discovery is Dashie only
                 self.context["title_placeholders"] = {"name": device_name}
                 return await self.async_step_confirm()
 

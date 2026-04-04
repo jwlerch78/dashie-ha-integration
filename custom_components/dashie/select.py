@@ -1,4 +1,4 @@
-"""Select entities for Dashie Lite integration."""
+"""Select entities for Dashie integration."""
 from __future__ import annotations
 
 import logging
@@ -31,7 +31,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Dashie Lite select entities."""
+    """Set up Dashie select entities."""
     coordinator: DashieCoordinator = hass.data[DOMAIN][entry.entry_id]
     device_id = entry.data[CONF_DEVICE_ID]
 
