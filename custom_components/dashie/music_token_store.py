@@ -68,6 +68,16 @@ class DashieMusicTokenView(HomeAssistantView):
             return web.json_response({})
         return web.json_response(store.get_token())
 
+    async def delete(self, request: web.Request) -> web.Response:
+        hass = request.app["hass"]
+        store: MusicTokenStore | None = hass.data.get("dashie", {}).get("music_token_store")
+        if store is None:
+            return web.json_response({"error": "Store not initialized"}, status=500)
+        store._data = {}
+        await store._store.async_save({})
+        _LOGGER.info("Cleared central MA token")
+        return web.json_response({"cleared": True})
+
     async def post(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
         store: MusicTokenStore | None = hass.data.get("dashie", {}).get("music_token_store")
