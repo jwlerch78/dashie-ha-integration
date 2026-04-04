@@ -4,6 +4,10 @@ Supports configurable media base path via:
 1. DASHIE_MEDIA_PATH environment variable
 2. media_base_path in integration options
 3. Default: hass.config.path("media") = /config/media
+
+Note: EXIF metadata extraction (date, GPS, location) is handled by the
+Android Kotlin layer (PhotoMetadataExtractor) when photos are downloaded,
+not server-side. This API returns file metadata only.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Supported image formats
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
+
 
 
 def _get_media_base_path(hass: HomeAssistant) -> Path:
@@ -243,7 +248,6 @@ def _scan_media_folder(media_dir: Path, folder_name: str) -> list[dict]:
                             "modified": item.stat().st_mtime,
                         })
                 elif item.is_dir() and not item.name.startswith("."):
-                    # Recursively scan subdirectories
                     new_prefix = f"{prefix}/{item.name}" if prefix else item.name
                     scan_recursive(item, new_prefix)
         except PermissionError:
@@ -294,7 +298,6 @@ def _scan_all_folders(media_base: Path) -> list[dict]:
                     "modified": item.stat().st_mtime,
                 })
         elif item.is_dir() and not item.name.startswith("."):
-            # Scan each subdirectory
             scan_folder_recursive(item, item.name)
 
     return photos
