@@ -411,6 +411,12 @@ def _build_ffmpeg_cmd(
     return cmd
 
 
+async def _write_and_drain(response: web.StreamResponse, data: bytes) -> None:
+    """Write data and drain, as a single awaitable for timeout wrapping."""
+    await response.write(data)
+    await response.drain()
+
+
 async def _pipe_frames_to_response(
     process: asyncio.subprocess.Process,
     response: web.StreamResponse,
@@ -584,8 +590,11 @@ async def _pipe_frames_to_response(
             )
             try:
                 t_before = time.monotonic()
-                await response.write(frame)
-                await response.drain()
+                # Timeout write+drain to detect dead clients (device crash leaves
+                # TCP half-open; without timeout, writes buffer indefinitely)
+                await asyncio.wait_for(
+                    _write_and_drain(response, frame), timeout=10.0
+                )
                 t_after = time.monotonic()
                 write_ms = (t_after - t_before) * 1000
                 if write_ms > 20:  # Log slow writes
@@ -593,6 +602,13 @@ async def _pipe_frames_to_response(
                         "MJPEG [%s]: SLOW write+drain: %.1fms (frame=%d bytes)",
                         entity_id, write_ms, len(frame_data),
                     )
+            except asyncio.TimeoutError:
+                _LOGGER.info(
+                    "MJPEG [%s]: write timed out (client likely crashed), closing stream",
+                    entity_id,
+                )
+                client_gone = True
+                break
             except (ConnectionResetError, ConnectionAbortedError):
                 client_gone = True
                 break

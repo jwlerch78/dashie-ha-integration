@@ -364,7 +364,16 @@ class DashieFeedStreamView(HomeAssistantView):
                     + b"\r\n"
                 )
                 try:
-                    await response.write(frame)
+                    # Timeout write to detect dead clients (device crash leaves
+                    # TCP half-open; without timeout, subscriber lingers forever
+                    # and prevents FFmpeg from stopping)
+                    await asyncio.wait_for(response.write(frame), timeout=10.0)
+                except asyncio.TimeoutError:
+                    _LOGGER.info(
+                        "Feed %s sub %d: write timed out (client likely crashed)",
+                        feed_id, sub_id,
+                    )
+                    break
                 except (ConnectionResetError, ConnectionAbortedError):
                     break
         except asyncio.CancelledError:
