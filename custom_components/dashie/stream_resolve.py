@@ -118,6 +118,41 @@ async def _get_go2rtc_stream_name(host: str, entity_id: str) -> str | None:
         return None
 
 
+async def _register_go2rtc_stream(
+    host: str, stream_name: str, rtsp_url: str
+) -> bool:
+    """Register a stream in go2rtc via its REST API.
+
+    Uses PUT /api/streams to add/update a stream source.
+    go2rtc will connect to the RTSP URL and restream it credential-free
+    on its RTSP port.
+    """
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # go2rtc API: PUT /api/streams?src=name with body = source URL
+            url = (
+                f"http://{host}:{_GO2RTC_API_PORT}"
+                f"/api/streams?src={stream_name}"
+            )
+            async with session.put(url, json=[rtsp_url]) as resp:
+                if resp.status == 200:
+                    _LOGGER.info(
+                        "Auto-registered go2rtc stream %s → %s",
+                        stream_name,
+                        _redact_url(rtsp_url),
+                    )
+                    return True
+                _LOGGER.warning(
+                    "Failed to register go2rtc stream %s: HTTP %d",
+                    stream_name,
+                    resp.status,
+                )
+    except Exception as err:
+        _LOGGER.warning("Failed to register go2rtc stream %s: %s", stream_name, err)
+    return False
+
+
 class DashieStreamResolveView(HomeAssistantView):
     """Resolve a camera entity to its RTSP stream source URL."""
 
@@ -152,7 +187,6 @@ class DashieStreamResolveView(HomeAssistantView):
         if go2rtc_ok and go2rtc_host:
             stream_name = await _get_go2rtc_stream_name(go2rtc_host, entity_id)
             if stream_name:
-                # Use HA's IP (visible to tablets) not localhost
                 ha_ip = request.host.split(":")[0]
                 rtsp_url = f"rtsp://{ha_ip}:{_GO2RTC_RTSP_PORT}/{stream_name}"
                 _LOGGER.debug("Resolved %s → %s (via go2rtc)", entity_id, rtsp_url)
@@ -160,6 +194,27 @@ class DashieStreamResolveView(HomeAssistantView):
                     "rtsp_url": rtsp_url,
                     "available": available,
                 })
+
+            # go2rtc is available but doesn't have this stream — auto-register it.
+            # Get the raw RTSP URL from HA and register in go2rtc.
+            raw_rtsp = await _get_stream_source(hass, entity_id)
+            if raw_rtsp:
+                # Use entity_id as the go2rtc stream name for consistency
+                registered = await _register_go2rtc_stream(
+                    go2rtc_host, entity_id, raw_rtsp
+                )
+                if registered:
+                    ha_ip = request.host.split(":")[0]
+                    rtsp_url = (
+                        f"rtsp://{ha_ip}:{_GO2RTC_RTSP_PORT}/{entity_id}"
+                    )
+                    _LOGGER.info(
+                        "Auto-registered and resolved %s → %s", entity_id, rtsp_url
+                    )
+                    return web.json_response({
+                        "rtsp_url": rtsp_url,
+                        "available": available,
+                    })
 
         # Fallback: raw camera RTSP URL — but only if credential-free.
         # URLs with userinfo (user:pass@host) break android.net.Uri when
