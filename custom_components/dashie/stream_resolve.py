@@ -144,6 +144,9 @@ class DashieStreamResolveView(HomeAssistantView):
                 {"error": f"Entity '{entity_id}' not found"}, status=404
             )
 
+        # Entity availability based on HA state (unavailable = camera offline)
+        available = state.state != "unavailable"
+
         # Prefer go2rtc restream (credential-free, ExoPlayer-friendly)
         go2rtc_ok, go2rtc_host = await _detect_go2rtc(hass)
         if go2rtc_ok and go2rtc_host:
@@ -153,7 +156,10 @@ class DashieStreamResolveView(HomeAssistantView):
                 ha_ip = request.host.split(":")[0]
                 rtsp_url = f"rtsp://{ha_ip}:{_GO2RTC_RTSP_PORT}/{stream_name}"
                 _LOGGER.debug("Resolved %s → %s (via go2rtc)", entity_id, rtsp_url)
-                return web.json_response({"rtsp_url": rtsp_url})
+                return web.json_response({
+                    "rtsp_url": rtsp_url,
+                    "available": available,
+                })
 
         # Fallback: raw camera RTSP URL — but only if credential-free.
         # URLs with userinfo (user:pass@host) break android.net.Uri when
@@ -171,7 +177,7 @@ class DashieStreamResolveView(HomeAssistantView):
                 "Resolved %s → %s (raw)",
                 entity_id, _redact_url(rtsp_url) if rtsp_url else None,
             )
-        return web.json_response({"rtsp_url": rtsp_url})
+        return web.json_response({"rtsp_url": rtsp_url, "available": available})
 
 
 def register_stream_resolve_views(hass: HomeAssistant) -> None:
