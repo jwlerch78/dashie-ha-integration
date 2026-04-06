@@ -61,7 +61,11 @@ async def _detect_go2rtc(hass: HomeAssistant) -> tuple[bool, str | None]:
 
 
 async def _get_go2rtc_stream_name(host: str, entity_id: str) -> str | None:
-    """Check if a camera entity has a go2rtc stream and return the stream name."""
+    """Check if a camera entity has a go2rtc stream compatible with RTSP restreaming.
+
+    Only returns streams whose producers can be served over go2rtc's RTSP port.
+    Streams using echo:curl (HA supervisor API) only work via WebRTC/HTTP, not RTSP.
+    """
     try:
         timeout = aiohttp.ClientTimeout(total=3)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -80,8 +84,35 @@ async def _get_go2rtc_stream_name(host: str, entity_id: str) -> str | None:
                         candidates.extend([base, f"{base}_live_view"])
                         break
                 for candidate in candidates:
-                    if candidate in streams:
+                    if candidate not in streams:
+                        continue
+                    # Check if any producer has a direct stream URL (rtsp://, rtmp://)
+                    # that go2rtc can restream over its RTSP port. Streams with only
+                    # echo:curl or exec: producers don't work via RTSP restream.
+                    stream_info = streams[candidate]
+                    producers = stream_info.get("producers") or []
+                    has_direct = False
+                    for prod in producers:
+                        url = ""
+                        if isinstance(prod, dict):
+                            url = prod.get("url", "")
+                        elif isinstance(prod, str):
+                            url = prod
+                        if url.startswith(("rtsp://", "rtmp://", "rtsps://")):
+                            has_direct = True
+                            break
+                        # Active producer with no URL but has a format_name means
+                        # the stream is currently connected (e.g. incoming RTSP)
+                        if isinstance(prod, dict) and prod.get("format_name") == "rtsp":
+                            has_direct = True
+                            break
+                    if has_direct:
                         return candidate
+                    _LOGGER.debug(
+                        "go2rtc stream %s exists but has no direct producer "
+                        "(only echo/exec) — skipping RTSP restream",
+                        candidate,
+                    )
                 return None
     except Exception:
         return None
