@@ -69,8 +69,17 @@ async def _get_go2rtc_stream_name(host: str, entity_id: str) -> str | None:
                 if resp.status != 200:
                     return None
                 streams = await resp.json()
-                # Check for exact entity_id match first, then common variants
-                for candidate in (entity_id, f"{entity_id}_live_view"):
+                # Check for exact entity_id match first, then common variants.
+                # HA creates _hd_stream / _sd_stream sub-entities for Tapo cameras,
+                # but go2rtc only knows the base _live_view stream name.
+                candidates = [entity_id, f"{entity_id}_live_view"]
+                # Strip common suffixes to find the base camera name
+                for suffix in ("_hd_stream", "_sd_stream", "_live_view"):
+                    if entity_id.endswith(suffix):
+                        base = entity_id[: -len(suffix)]
+                        candidates.extend([base, f"{base}_live_view"])
+                        break
+                for candidate in candidates:
                     if candidate in streams:
                         return candidate
                 return None
