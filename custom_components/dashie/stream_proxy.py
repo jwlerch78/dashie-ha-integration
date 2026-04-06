@@ -10,6 +10,7 @@ and other consumer cameras that close RTSP connections periodically).
 Hardware acceleration is auto-detected at startup:
 - Intel VAAPI: Full HW decode + MJPEG encode (near-zero CPU)
 - NVIDIA CUDA: HW H.264 decode + SW MJPEG encode
+- RPi V4L2 M2M: HW H.264 decode + SW MJPEG encode (Pi 4/5)
 - Software: Pure CPU fallback (all platforms)
 
 Endpoint: GET /api/dashie/stream/mjpeg/{entity_id}?fps=10&quality=8&width=640
@@ -49,7 +50,7 @@ PREFILL_FRAMES = 10      # Wait for this many frames before first send (~500ms a
 SKIP_ACCUM_WINDOW = 5.0  # Seconds over which to measure input fps for skip ratio
 
 # Hardware acceleration (auto-detected at startup)
-# Values: "vaapi", "cuda", "software"
+# Values: "vaapi", "cuda", "v4l2m2m", "software"
 _hw_accel: str | None = None  # None = not yet detected
 _vaapi_device: str | None = None  # e.g. /dev/dri/renderD128
 
@@ -235,9 +236,10 @@ async def _detect_hw_accel() -> str:
     Detection order (most capable first):
     1. Intel VAAPI — full HW decode + MJPEG encode (near-zero CPU)
     2. NVIDIA CUDA — HW H.264 decode + SW MJPEG encode
-    3. Software — pure CPU fallback
+    3. V4L2 M2M — HW H.264 decode on RPi 4/5 + SW MJPEG encode
+    4. Software — pure CPU fallback
 
-    Returns: "vaapi", "cuda", or "software"
+    Returns: "vaapi", "cuda", "v4l2m2m", or "software"
     """
     global _hw_accel, _vaapi_device
 
@@ -292,6 +294,28 @@ async def _detect_hw_accel() -> str:
     except Exception:
         pass
 
+    # Check for V4L2 M2M (Raspberry Pi 4/5 VideoCore) — HW H.264 decode
+    # Pi exposes /dev/video10 (decoder) and /dev/video11 (encoder) via bcm2835-codec.
+    # Can't test h264_v4l2m2m with nullsrc (needs real H.264 input), so check
+    # that the device node exists AND FFmpeg has the decoder compiled in.
+    v4l2_devices = [d for d in ("/dev/video10", "/dev/video11") if os.path.exists(d)]
+    if v4l2_devices:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-hide_banner", "-decoders",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if b"h264_v4l2m2m" in stdout:
+                _hw_accel = "v4l2m2m"
+                _LOGGER.info(
+                    "Hardware acceleration: V4L2 M2M (h264_v4l2m2m) — RPi HW decode"
+                )
+                return _hw_accel
+        except Exception:
+            pass
+
     _hw_accel = "software"
     _LOGGER.info("Hardware acceleration: none detected — using software encoding")
     return _hw_accel
@@ -306,6 +330,7 @@ def _build_ffmpeg_cmd(
     Adapts command based on available hardware acceleration:
     - vaapi: HW decode + HW MJPEG encode via Intel iGPU
     - cuda: HW H.264 decode via NVIDIA + SW MJPEG encode
+    - v4l2m2m: HW H.264 decode via RPi VideoCore + SW MJPEG encode
     - software: Pure CPU (default)
     """
     cmd = [
@@ -335,6 +360,13 @@ def _build_ffmpeg_cmd(
         cmd.extend([
             "-hwaccel", "cuda",
             "-hwaccel_output_format", "cuda",
+        ])
+    elif hw_accel == "v4l2m2m":
+        # RPi VideoCore: use V4L2 M2M for HW H.264 decode.
+        # Output is raw frames (no GPU surface format) — scale + MJPEG
+        # encode happen in software, but decode is offloaded.
+        cmd.extend([
+            "-c:v", "h264_v4l2m2m",
         ])
 
     # RTSP-specific input options
@@ -381,6 +413,16 @@ def _build_ffmpeg_cmd(
             vf_parts.append(f"scale_cuda={width}:-1")
         vf_parts.extend(["hwdownload", "format=nv12"])
         vf_parts.append("setpts=N*100000")
+        cmd.extend(["-vf", ",".join(vf_parts)])
+        cmd.extend([
+            "-c:v", "mjpeg",
+            "-q:v", str(quality),
+        ])
+    elif hw_accel == "v4l2m2m":
+        # V4L2 M2M outputs raw frames — scale + encode in software
+        vf_parts = ["setpts=N*100000"]
+        if width:
+            vf_parts.insert(0, f"scale={width}:-1")
         cmd.extend(["-vf", ",".join(vf_parts)])
         cmd.extend([
             "-c:v", "mjpeg",
