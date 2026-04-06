@@ -155,12 +155,22 @@ class DashieStreamResolveView(HomeAssistantView):
                 _LOGGER.debug("Resolved %s → %s (via go2rtc)", entity_id, rtsp_url)
                 return web.json_response({"rtsp_url": rtsp_url})
 
-        # Fallback: raw camera RTSP URL (may contain credentials)
+        # Fallback: raw camera RTSP URL — but only if credential-free.
+        # URLs with userinfo (user:pass@host) break android.net.Uri when
+        # the username contains '@' (e.g. email addresses). Return null
+        # so the tablet falls back to MJPEG instead of failing repeatedly.
         rtsp_url = await _get_stream_source(hass, entity_id)
-        _LOGGER.debug(
-            "Resolved %s → %s (raw)",
-            entity_id, _redact_url(rtsp_url) if rtsp_url else None,
-        )
+        if rtsp_url and "@" in rtsp_url.split("//", 1)[-1].split("/", 1)[0]:
+            _LOGGER.debug(
+                "Resolved %s → credential URL (suppressed for ExoPlayer safety)",
+                entity_id,
+            )
+            rtsp_url = None
+        else:
+            _LOGGER.debug(
+                "Resolved %s → %s (raw)",
+                entity_id, _redact_url(rtsp_url) if rtsp_url else None,
+            )
         return web.json_response({"rtsp_url": rtsp_url})
 
 
