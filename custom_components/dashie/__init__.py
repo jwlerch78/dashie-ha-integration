@@ -37,6 +37,7 @@ from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .device_name_views import register_device_name_views
 from .stream_proxy import register_stream_proxy_views
+from .stream_resolve import register_stream_resolve_views
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ _immich_token_registered = False
 _music_relay_registered = False
 _sensor_push_registered = False
 _device_name_registered = False
+_stream_resolve_registered = False
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -94,7 +96,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie from a config entry."""
-    global _media_api_registered, _stream_proxy_registered
+    global _media_api_registered, _stream_proxy_registered, _stream_resolve_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
     global _music_token_registered, _immich_token_registered
     global _music_relay_registered, _device_name_registered
@@ -164,6 +166,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_stream_proxy_views(hass)
         _stream_proxy_registered = True
         _LOGGER.info("Registered Dashie MJPEG stream proxy")
+
+    if not _stream_resolve_registered:
+        register_stream_resolve_views(hass)
+        _stream_resolve_registered = True
+        _LOGGER.info("Registered Dashie stream resolve endpoint")
 
     if not _feed_registry_registered:
         register_feed_registry_views(hass)

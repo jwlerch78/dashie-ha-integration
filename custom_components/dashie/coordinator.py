@@ -367,21 +367,41 @@ class DashieCoordinator(DataUpdateCoordinator):
                 entity_id, feed_id, self.host, mode,
             )
             self.hass.async_create_task(
-                self.send_command(
-                    "videoFeedTrigger",
-                    entityId=entity_id,
-                    state=state_val,
-                    feedId=feed_id,
-                    feedLabel=feed.get("label", ""),
-                    cameraEntityId=feed.get("camera_entity_id", ""),
-                    mode=mode,
-                    autoDismissSeconds=str(feed.get("auto_dismiss_seconds", 30)),
-                    continueWhileActive=str(feed.get("continue_while_active", True)).lower(),
-                    alertSound=feed.get("alert_sound", ""),
-                    streamSourceType=feed.get("stream_source_type", "entity"),
-                    streamSourceUrl=feed.get("stream_source_url", ""),
+                self._push_feed_trigger(
+                    feed, feed_id, entity_id, state_val, mode,
                 )
             )
+
+    async def _push_feed_trigger(
+        self, feed: dict, feed_id: str, entity_id: str, state_val: str, mode: str,
+    ) -> None:
+        """Resolve RTSP URL and push feed trigger to the tablet."""
+        from .stream_proxy import _get_stream_source
+
+        # Resolve RTSP URL for direct ExoPlayer playback on the tablet
+        rtsp_url = ""
+        source_type = feed.get("stream_source_type", "entity")
+        if source_type in ("rtsp", "go2rtc") and feed.get("stream_source_url"):
+            rtsp_url = feed["stream_source_url"]
+        elif source_type == "entity" and feed.get("camera_entity_id"):
+            resolved = await _get_stream_source(self.hass, feed["camera_entity_id"])
+            rtsp_url = resolved or ""
+
+        await self.send_command(
+            "videoFeedTrigger",
+            entityId=entity_id,
+            state=state_val,
+            feedId=feed_id,
+            feedLabel=feed.get("label", ""),
+            cameraEntityId=feed.get("camera_entity_id", ""),
+            mode=mode,
+            autoDismissSeconds=str(feed.get("auto_dismiss_seconds", 30)),
+            continueWhileActive=str(feed.get("continue_while_active", True)).lower(),
+            alertSound=feed.get("alert_sound", ""),
+            streamSourceType=source_type,
+            streamSourceUrl=feed.get("stream_source_url", ""),
+            rtspUrl=rtsp_url,
+        )
 
     @callback
     def _handle_legacy_trigger(self, event: Event) -> None:

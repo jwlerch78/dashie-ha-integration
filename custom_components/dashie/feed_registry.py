@@ -230,17 +230,26 @@ class DashieFeedsListView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
-        """Return all feed definitions, annotated with live camera availability."""
+        """Return all feed definitions, annotated with live camera availability and RTSP URLs."""
+        from .stream_proxy import _get_stream_source
+
         hass = request.app["hass"]
         registry: FeedRegistry = hass.data["dashie"]["feed_registry"]
         feeds = registry.get_feeds()
         for feed in feeds.values():
-            if feed.get("stream_source_type", "entity") == "entity":
+            source_type = feed.get("stream_source_type", "entity")
+            if source_type == "entity":
                 entity_id = feed.get("camera_entity_id", "")
                 state = hass.states.get(entity_id) if entity_id else None
                 feed["available"] = state is not None and state.state != "unavailable"
+                # Resolve RTSP URL so tablets can connect directly via ExoPlayer
+                if feed["available"] and entity_id:
+                    feed["rtsp_url"] = await _get_stream_source(hass, entity_id) or ""
+                else:
+                    feed["rtsp_url"] = ""
             else:
                 feed["available"] = True
+                feed["rtsp_url"] = feed.get("stream_source_url", "")
         return web.json_response({"feeds": feeds})
 
     async def post(self, request: web.Request) -> web.Response:
