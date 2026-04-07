@@ -12,8 +12,10 @@ Response: {"rtsp_url": "rtsp://..."} or {"rtsp_url": null}
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -59,6 +61,24 @@ async def _detect_go2rtc(hass: HomeAssistant) -> tuple[bool, str | None]:
     _go2rtc_host = None
     _LOGGER.info("go2rtc not detected — will use raw RTSP URLs")
     return False, None
+
+
+async def _is_rtsp_reachable(rtsp_url: str, timeout: float = 2.0) -> bool:
+    """Quick TCP connect check to verify the RTSP source host:port is reachable."""
+    try:
+        parsed = urlparse(rtsp_url)
+        host = parsed.hostname
+        port = parsed.port or 554
+        if not host:
+            return False
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=timeout
+        )
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except Exception:
+        return False
 
 
 async def _get_go2rtc_stream_name(host: str, entity_id: str) -> str | None:
@@ -276,7 +296,7 @@ class DashieStreamResolveView(HomeAssistantView):
             # go2rtc is available but doesn't have this stream — auto-register it.
             # Get the raw RTSP URL from HA and register in go2rtc.
             raw_rtsp = await _get_stream_source(hass, entity_id)
-            if raw_rtsp:
+            if raw_rtsp and await _is_rtsp_reachable(raw_rtsp):
                 # Prefer sub-stream for tablet playback — full HD (2560x1440)
                 # overwhelms low-end tablet decoders. Sub-stream is typically
                 # 640x360 which is plenty for strip thumbnails and focal views.
