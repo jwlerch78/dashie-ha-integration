@@ -285,7 +285,38 @@ class DashieStreamResolveView(HomeAssistantView):
         # mean the camera can't stream.
         available = state.state not in ("unavailable", "off")
 
-        # Prefer go2rtc restream (credential-free, ExoPlayer-friendly)
+        # Get the raw RTSP source URL from HA
+        raw_rtsp = await _get_stream_source(hass, entity_id)
+        has_credentials = bool(
+            raw_rtsp
+            and "@" in raw_rtsp.split("//", 1)[-1].split("/", 1)[0]
+        )
+
+        # Credential-free streams: return direct URL (bypass go2rtc).
+        # go2rtc adds latency and can drop frames for some RTSP servers
+        # (e.g. Android camera servers). Direct is better when possible.
+        if raw_rtsp and not has_credentials:
+            reachable = await _is_rtsp_reachable(raw_rtsp)
+            if reachable:
+                _LOGGER.info(
+                    "Resolved %s → %s (direct, no credentials)",
+                    entity_id, _redact_url(raw_rtsp),
+                )
+                return web.json_response({
+                    "rtsp_url": raw_rtsp,
+                    "available": available,
+                })
+            else:
+                _LOGGER.info(
+                    "Direct RTSP unreachable for %s: %s",
+                    entity_id, _redact_url(raw_rtsp),
+                )
+                return web.json_response({
+                    "rtsp_url": None,
+                    "available": False,
+                })
+
+        # Streams with credentials need go2rtc to strip creds for ExoPlayer
         go2rtc_ok, go2rtc_host = await _detect_go2rtc(hass)
         if go2rtc_ok and go2rtc_host:
             stream_name = await _get_go2rtc_stream_name(go2rtc_host, entity_id)
@@ -301,19 +332,13 @@ class DashieStreamResolveView(HomeAssistantView):
             if check_only:
                 # Don't auto-register — just return availability with no RTSP URL.
                 # The stream will be registered on-demand when focal card opens.
-                reachable = False
-                if available:
-                    raw_rtsp = await _get_stream_source(hass, entity_id)
-                    if raw_rtsp:
-                        reachable = await _is_rtsp_reachable(raw_rtsp)
+                reachable = await _is_rtsp_reachable(raw_rtsp) if raw_rtsp else False
                 return web.json_response({
                     "rtsp_url": None,
                     "available": available and reachable,
                 })
 
-            # go2rtc is available but doesn't have this stream — auto-register it.
-            # Get the raw RTSP URL from HA and register in go2rtc.
-            raw_rtsp = await _get_stream_source(hass, entity_id)
+            # go2rtc doesn't have this stream — auto-register it.
             if raw_rtsp:
                 reachable = await _is_rtsp_reachable(raw_rtsp)
                 _LOGGER.info(
@@ -333,7 +358,6 @@ class DashieStreamResolveView(HomeAssistantView):
                     _LOGGER.debug(
                         "Substituted /stream1 → /stream2 for tablet-friendly resolution"
                     )
-                # Use entity_id as the go2rtc stream name for consistency
                 registered = await _register_go2rtc_stream(
                     hass, entity_id, reg_url
                 )
@@ -350,28 +374,8 @@ class DashieStreamResolveView(HomeAssistantView):
                         "available": available,
                     })
 
-        # Fallback: raw camera RTSP URL — but only if credential-free and reachable.
-        # URLs with userinfo (user:pass@host) break android.net.Uri when
-        # the username contains '@' (e.g. email addresses). Return null
-        # so the tablet falls back to MJPEG instead of failing repeatedly.
-        rtsp_url = await _get_stream_source(hass, entity_id)
-        if rtsp_url and "@" in rtsp_url.split("//", 1)[-1].split("/", 1)[0]:
-            _LOGGER.debug(
-                "Resolved %s → credential URL (suppressed for ExoPlayer safety)",
-                entity_id,
-            )
-            rtsp_url = None
-        elif rtsp_url and not await _is_rtsp_reachable(rtsp_url):
-            _LOGGER.info(
-                "Resolved %s → %s (raw) but RTSP unreachable — suppressing",
-                entity_id, _redact_url(rtsp_url),
-            )
-            rtsp_url = None
-        else:
-            _LOGGER.debug(
-                "Resolved %s → %s (raw)",
-                entity_id, _redact_url(rtsp_url) if rtsp_url else None,
-            )
+        # No RTSP available — tablet will use MJPEG fallback
+        rtsp_url = None
         return web.json_response({"rtsp_url": rtsp_url, "available": available})
 
 
