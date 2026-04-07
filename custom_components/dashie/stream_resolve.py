@@ -13,6 +13,7 @@ Response: {"rtsp_url": "rtsp://..."} or {"rtsp_url": null}
 from __future__ import annotations
 
 import logging
+import os
 
 import aiohttp
 
@@ -118,39 +119,81 @@ async def _get_go2rtc_stream_name(host: str, entity_id: str) -> str | None:
         return None
 
 
-async def _register_go2rtc_stream(
-    host: str, stream_name: str, rtsp_url: str
-) -> bool:
-    """Register a stream in go2rtc via its REST API.
+_GO2RTC_CONFIG_PATH = "/config/go2rtc.yaml"
+_go2rtc_restart_pending = False
 
-    Uses PUT /api/streams to add/update a stream source.
-    go2rtc will connect to the RTSP URL and restream it credential-free
-    on its RTSP port.
+
+async def _register_go2rtc_stream(
+    hass: HomeAssistant, stream_name: str, rtsp_url: str
+) -> bool:
+    """Register a stream in go2rtc by adding it to go2rtc.yaml and restarting.
+
+    API-registered streams (POST /api/streams) are ephemeral and don't serve
+    on go2rtc's RTSP port. Only YAML-configured streams work for RTSP restreaming.
     """
+    import yaml
+    from pathlib import Path
+
+    global _go2rtc_restart_pending
+
+    config_path = Path(_GO2RTC_CONFIG_PATH)
+    if not config_path.exists():
+        _LOGGER.warning("go2rtc config not found at %s", _GO2RTC_CONFIG_PATH)
+        return False
+
     try:
-        timeout = aiohttp.ClientTimeout(total=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            # go2rtc API: PUT /api/streams?src=name with body = source URL
-            url = (
-                f"http://{host}:{_GO2RTC_API_PORT}"
-                f"/api/streams?src={stream_name}"
-            )
-            async with session.put(url, json=[rtsp_url]) as resp:
-                if resp.status == 200:
-                    _LOGGER.info(
-                        "Auto-registered go2rtc stream %s → %s",
-                        stream_name,
-                        _redact_url(rtsp_url),
-                    )
-                    return True
-                _LOGGER.warning(
-                    "Failed to register go2rtc stream %s: HTTP %d",
-                    stream_name,
-                    resp.status,
-                )
+        config = yaml.safe_load(config_path.read_text()) or {}
+        streams = config.setdefault("streams", {})
+
+        if stream_name in streams:
+            _LOGGER.debug("go2rtc stream %s already in config", stream_name)
+            return True
+
+        streams[stream_name] = [rtsp_url]
+        config_path.write_text(yaml.dump(config, default_flow_style=False))
+        _LOGGER.info(
+            "Added go2rtc stream %s → %s to config",
+            stream_name,
+            _redact_url(rtsp_url),
+        )
+
+        # Restart go2rtc addon to pick up new config.
+        # Batch restarts — if multiple streams are registered in quick succession,
+        # only restart once after a short delay.
+        if not _go2rtc_restart_pending:
+            _go2rtc_restart_pending = True
+
+            async def _delayed_restart():
+                global _go2rtc_restart_pending
+                import asyncio
+                await asyncio.sleep(3)  # Wait for other streams to register
+                _go2rtc_restart_pending = False
+                try:
+                    timeout = aiohttp.ClientTimeout(total=10)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        # HA Supervisor API to restart go2rtc addon
+                        async with session.post(
+                            "http://supervisor/addons/d490ac36_go2rtc/restart",
+                            headers={
+                                "Authorization": f"Bearer {os.environ.get('SUPERVISOR_TOKEN', '')}",
+                            },
+                        ) as resp:
+                            if resp.status == 200:
+                                _LOGGER.info("Restarted go2rtc addon to load new streams")
+                            else:
+                                _LOGGER.warning(
+                                    "Failed to restart go2rtc addon: HTTP %d",
+                                    resp.status,
+                                )
+                except Exception as err:
+                    _LOGGER.warning("Failed to restart go2rtc addon: %s", err)
+
+            hass.async_create_task(_delayed_restart())
+
+        return True
     except Exception as err:
         _LOGGER.warning("Failed to register go2rtc stream %s: %s", stream_name, err)
-    return False
+        return False
 
 
 class DashieStreamResolveView(HomeAssistantView):
@@ -201,7 +244,7 @@ class DashieStreamResolveView(HomeAssistantView):
             if raw_rtsp:
                 # Use entity_id as the go2rtc stream name for consistency
                 registered = await _register_go2rtc_stream(
-                    go2rtc_host, entity_id, raw_rtsp
+                    hass, entity_id, raw_rtsp
                 )
                 if registered:
                     ha_ip = request.host.split(":")[0]
