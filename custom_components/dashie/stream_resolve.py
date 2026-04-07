@@ -255,8 +255,10 @@ class DashieStreamResolveView(HomeAssistantView):
                 {"error": f"Entity '{entity_id}' not found"}, status=404
             )
 
-        # Entity availability based on HA state (unavailable = camera offline)
-        available = state.state != "unavailable"
+        # Entity availability — cameras can be unavailable (offline), idle (powered
+        # off but entity exists), or off (explicitly turned off). Only "streaming"
+        # and "recording" are truly available for RTSP playback.
+        available = state.state not in ("unavailable", "idle", "off")
 
         # Prefer go2rtc restream (credential-free, ExoPlayer-friendly)
         go2rtc_ok, go2rtc_host = await _detect_go2rtc(hass)
