@@ -296,7 +296,16 @@ class DashieStreamResolveView(HomeAssistantView):
             # go2rtc is available but doesn't have this stream — auto-register it.
             # Get the raw RTSP URL from HA and register in go2rtc.
             raw_rtsp = await _get_stream_source(hass, entity_id)
-            if raw_rtsp and await _is_rtsp_reachable(raw_rtsp):
+            if raw_rtsp:
+                reachable = await _is_rtsp_reachable(raw_rtsp)
+                _LOGGER.info(
+                    "RTSP reachability for %s: %s (source: %s)",
+                    entity_id, reachable, _redact_url(raw_rtsp),
+                )
+            else:
+                reachable = False
+                _LOGGER.info("No stream source for %s", entity_id)
+            if raw_rtsp and reachable:
                 # Prefer sub-stream for tablet playback — full HD (2560x1440)
                 # overwhelms low-end tablet decoders. Sub-stream is typically
                 # 640x360 which is plenty for strip thumbnails and focal views.
@@ -323,7 +332,7 @@ class DashieStreamResolveView(HomeAssistantView):
                         "available": available,
                     })
 
-        # Fallback: raw camera RTSP URL — but only if credential-free.
+        # Fallback: raw camera RTSP URL — but only if credential-free and reachable.
         # URLs with userinfo (user:pass@host) break android.net.Uri when
         # the username contains '@' (e.g. email addresses). Return null
         # so the tablet falls back to MJPEG instead of failing repeatedly.
@@ -332,6 +341,12 @@ class DashieStreamResolveView(HomeAssistantView):
             _LOGGER.debug(
                 "Resolved %s → credential URL (suppressed for ExoPlayer safety)",
                 entity_id,
+            )
+            rtsp_url = None
+        elif rtsp_url and not await _is_rtsp_reachable(rtsp_url):
+            _LOGGER.info(
+                "Resolved %s → %s (raw) but RTSP unreachable — suppressing",
+                entity_id, _redact_url(rtsp_url),
             )
             rtsp_url = None
         else:
