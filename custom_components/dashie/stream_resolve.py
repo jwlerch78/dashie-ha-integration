@@ -142,15 +142,27 @@ async def _register_go2rtc_stream(
         return False
 
     try:
-        config = yaml.safe_load(config_path.read_text()) or {}
-        streams = config.setdefault("streams", {})
+        content = config_path.read_text()
+        config = yaml.safe_load(content) or {}
+        streams = config.get("streams") or {}
 
         if stream_name in streams:
             _LOGGER.debug("go2rtc stream %s already in config", stream_name)
             return True
 
-        streams[stream_name] = [rtsp_url]
-        config_path.write_text(yaml.dump(config, default_flow_style=False))
+        # Append to YAML file directly to preserve existing formatting.
+        # If streams: is empty ({}) or missing, replace the line.
+        if not streams:
+            # Replace "streams: {}" or add "streams:" section
+            if "streams:" in content:
+                content = content.replace("streams: {}", "streams:")
+                content = content.replace("streams:{}", "streams:")
+            else:
+                content = content.rstrip() + "\nstreams:\n"
+
+        # Append the new stream entry
+        content = content.rstrip() + f"\n  {stream_name}:\n  - '{rtsp_url}'\n"
+        config_path.write_text(content)
         _LOGGER.info(
             "Added go2rtc stream %s → %s to config",
             stream_name,
@@ -170,20 +182,41 @@ async def _register_go2rtc_stream(
                 _go2rtc_restart_pending = False
                 try:
                     timeout = aiohttp.ClientTimeout(total=10)
+                    token = os.environ.get("SUPERVISOR_TOKEN", "")
+                    headers = {"Authorization": f"Bearer {token}"}
                     async with aiohttp.ClientSession(timeout=timeout) as session:
-                        # HA Supervisor API to restart go2rtc addon
-                        async with session.post(
-                            "http://supervisor/addons/d490ac36_go2rtc/restart",
-                            headers={
-                                "Authorization": f"Bearer {os.environ.get('SUPERVISOR_TOKEN', '')}",
-                            },
+                        # Find go2rtc addon slug dynamically
+                        slug = None
+                        async with session.get(
+                            "http://supervisor/addons",
+                            headers=headers,
                         ) as resp:
                             if resp.status == 200:
-                                _LOGGER.info("Restarted go2rtc addon to load new streams")
+                                data = await resp.json()
+                                addons = data.get("data", {}).get("addons", [])
+                                for addon in addons:
+                                    if "go2rtc" in addon.get("name", "").lower() or \
+                                       "go2rtc" in addon.get("slug", "").lower():
+                                        slug = addon["slug"]
+                                        break
+                        if not slug:
+                            _LOGGER.warning("Could not find go2rtc addon to restart")
+                            return
+
+                        async with session.post(
+                            f"http://supervisor/addons/{slug}/restart",
+                            headers=headers,
+                        ) as resp:
+                            if resp.status == 200:
+                                _LOGGER.info(
+                                    "Restarted go2rtc addon (%s) to load new streams",
+                                    slug,
+                                )
                             else:
+                                body = await resp.text()
                                 _LOGGER.warning(
-                                    "Failed to restart go2rtc addon: HTTP %d",
-                                    resp.status,
+                                    "Failed to restart go2rtc addon %s: HTTP %d: %s",
+                                    slug, resp.status, body,
                                 )
                 except Exception as err:
                     _LOGGER.warning("Failed to restart go2rtc addon: %s", err)
