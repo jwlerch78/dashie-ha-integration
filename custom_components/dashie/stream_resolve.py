@@ -261,8 +261,13 @@ class DashieStreamResolveView(HomeAssistantView):
 
         Prefers go2rtc restream URL (no credentials, ExoPlayer-friendly).
         Falls back to raw camera RTSP URL if go2rtc unavailable.
+
+        Query params:
+          ?check_only=1  — return availability + existing go2rtc URL only,
+                           skip auto-registration (used by strip for offline detection)
         """
         hass: HomeAssistant = request.app["hass"]
+        check_only = request.query.get("check_only") == "1"
 
         if not entity_id.startswith("camera."):
             return web.json_response(
@@ -291,6 +296,19 @@ class DashieStreamResolveView(HomeAssistantView):
                 return web.json_response({
                     "rtsp_url": rtsp_url,
                     "available": available,
+                })
+
+            if check_only:
+                # Don't auto-register — just return availability with no RTSP URL.
+                # The stream will be registered on-demand when focal card opens.
+                reachable = False
+                if available:
+                    raw_rtsp = await _get_stream_source(hass, entity_id)
+                    if raw_rtsp:
+                        reachable = await _is_rtsp_reachable(raw_rtsp)
+                return web.json_response({
+                    "rtsp_url": None,
+                    "available": available and reachable,
                 })
 
             # go2rtc is available but doesn't have this stream — auto-register it.
