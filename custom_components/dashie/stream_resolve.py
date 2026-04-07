@@ -275,9 +275,18 @@ class DashieStreamResolveView(HomeAssistantView):
             # Get the raw RTSP URL from HA and register in go2rtc.
             raw_rtsp = await _get_stream_source(hass, entity_id)
             if raw_rtsp:
+                # Prefer sub-stream for tablet playback — full HD (2560x1440)
+                # overwhelms low-end tablet decoders. Sub-stream is typically
+                # 640x360 which is plenty for strip thumbnails and focal views.
+                reg_url = raw_rtsp
+                if "/stream1" in reg_url:
+                    reg_url = reg_url.replace("/stream1", "/stream2")
+                    _LOGGER.debug(
+                        "Substituted /stream1 → /stream2 for tablet-friendly resolution"
+                    )
                 # Use entity_id as the go2rtc stream name for consistency
                 registered = await _register_go2rtc_stream(
-                    hass, entity_id, raw_rtsp
+                    hass, entity_id, reg_url
                 )
                 if registered:
                     ha_ip = request.host.split(":")[0]
