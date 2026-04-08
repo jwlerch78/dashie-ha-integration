@@ -25,11 +25,21 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .stream_proxy import _get_stream_source, _redact_url
+from .rtsp_relay import RtspRelayServer
 
 _LOGGER = logging.getLogger(__name__)
 
 # go2rtc RTSP restream port (default)
 _GO2RTC_API_PORT = 1984
+
+# Shared relay server instance — started in __init__.py, used here for stream registration
+_relay: RtspRelayServer | None = None
+
+
+def set_relay_server(relay: RtspRelayServer) -> None:
+    """Set the shared relay server instance (called from __init__.py)."""
+    global _relay
+    _relay = relay
 _GO2RTC_RTSP_PORT = 8554
 _go2rtc_available: bool | None = None  # None = not yet checked
 _go2rtc_host: str | None = None
@@ -316,59 +326,57 @@ class DashieStreamResolveView(HomeAssistantView):
                     "available": False,
                 })
 
-        # Streams with credentials need go2rtc to strip creds for ExoPlayer
-        go2rtc_ok, go2rtc_host = await _detect_go2rtc(hass)
-        if go2rtc_ok and go2rtc_host:
-            stream_name = await _get_go2rtc_stream_name(go2rtc_host, entity_id)
-            if stream_name:
-                ha_ip = request.host.split(":")[0]
-                rtsp_url = f"rtsp://{ha_ip}:{_GO2RTC_RTSP_PORT}/{stream_name}"
-                _LOGGER.debug("Resolved %s → %s (via go2rtc)", entity_id, rtsp_url)
+        # Streams with credentials — use our RTSP relay to strip creds.
+        # The relay proxies TCP-interleaved RTSP without transcoding.
+        if raw_rtsp and has_credentials:
+            reachable = await _is_rtsp_reachable(raw_rtsp)
+            if not reachable:
+                _LOGGER.info(
+                    "Credentialed RTSP unreachable for %s: %s",
+                    entity_id, _redact_url(raw_rtsp),
+                )
                 return web.json_response({
-                    "rtsp_url": rtsp_url,
-                    "available": available,
+                    "rtsp_url": None,
+                    "available": False,
                 })
 
             if check_only:
-                # Don't auto-register — just return availability with no RTSP URL.
-                # The stream will be registered on-demand when focal card opens.
-                reachable = await _is_rtsp_reachable(raw_rtsp) if raw_rtsp else False
+                # Just confirm availability — don't register in relay yet
                 return web.json_response({
                     "rtsp_url": None,
-                    "available": available and reachable,
+                    "available": available,
                 })
 
-            # go2rtc doesn't have this stream — auto-register it.
-            if raw_rtsp:
-                reachable = await _is_rtsp_reachable(raw_rtsp)
-                _LOGGER.info(
-                    "RTSP reachability for %s: %s (source: %s)",
-                    entity_id, reachable, _redact_url(raw_rtsp),
-                )
-            else:
-                reachable = False
-                _LOGGER.info("No stream source for %s", entity_id)
-            if raw_rtsp and reachable:
-                # Prefer sub-stream for tablet playback — full HD (2560x1440)
-                # overwhelms low-end tablet decoders. Sub-stream is typically
-                # 640x360 which is plenty for strip thumbnails and focal views.
+            # Register in relay and return relay URL
+            if _relay is not None:
+                # Prefer sub-stream for tablet playback
                 reg_url = raw_rtsp
                 if "/stream1" in reg_url:
                     reg_url = reg_url.replace("/stream1", "/stream2")
                     _LOGGER.debug(
                         "Substituted /stream1 → /stream2 for tablet-friendly resolution"
                     )
-                registered = await _register_go2rtc_stream(
-                    hass, entity_id, reg_url
+                _relay.register_stream(entity_id, reg_url)
+                ha_ip = request.host.split(":")[0]
+                rtsp_url = f"rtsp://{ha_ip}:{_relay.port}/{entity_id}"
+                _LOGGER.info(
+                    "Resolved %s → %s (via Dashie relay)",
+                    entity_id, _redact_url(rtsp_url),
                 )
-                if registered:
+                return web.json_response({
+                    "rtsp_url": rtsp_url,
+                    "available": available,
+                })
+
+            # Fallback: try go2rtc if relay not available
+            _LOGGER.warning("RTSP relay not available, trying go2rtc fallback")
+            go2rtc_ok, go2rtc_host = await _detect_go2rtc(hass)
+            if go2rtc_ok and go2rtc_host:
+                stream_name = await _get_go2rtc_stream_name(go2rtc_host, entity_id)
+                if stream_name:
                     ha_ip = request.host.split(":")[0]
-                    rtsp_url = (
-                        f"rtsp://{ha_ip}:{_GO2RTC_RTSP_PORT}/{entity_id}"
-                    )
-                    _LOGGER.info(
-                        "Auto-registered and resolved %s → %s", entity_id, rtsp_url
-                    )
+                    rtsp_url = f"rtsp://{ha_ip}:{_GO2RTC_RTSP_PORT}/{stream_name}"
+                    _LOGGER.debug("Resolved %s → %s (via go2rtc)", entity_id, rtsp_url)
                     return web.json_response({
                         "rtsp_url": rtsp_url,
                         "available": available,

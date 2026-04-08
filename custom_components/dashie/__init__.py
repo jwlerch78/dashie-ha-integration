@@ -37,7 +37,8 @@ from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .device_name_views import register_device_name_views
 from .stream_proxy import register_stream_proxy_views
-from .stream_resolve import register_stream_resolve_views
+from .stream_resolve import register_stream_resolve_views, set_relay_server
+from .rtsp_relay import RtspRelayServer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ _music_relay_registered = False
 _sensor_push_registered = False
 _device_name_registered = False
 _stream_resolve_registered = False
+_rtsp_relay_started = False
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -100,7 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     global _media_api_registered, _stream_proxy_registered, _stream_resolve_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
     global _music_token_registered, _immich_token_registered
-    global _music_relay_registered, _device_name_registered
+    global _music_relay_registered, _device_name_registered, _rtsp_relay_started
 
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
@@ -172,6 +174,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_stream_resolve_views(hass)
         _stream_resolve_registered = True
         _LOGGER.info("Registered Dashie stream resolve endpoint")
+
+    if not _rtsp_relay_started:
+        relay = RtspRelayServer(port=8555)
+        set_relay_server(relay)
+        await relay.start()
+        _rtsp_relay_started = True
+        _LOGGER.info("Started Dashie RTSP relay on port 8555")
 
     if not _feed_registry_registered:
         register_feed_registry_views(hass)
