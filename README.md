@@ -4,11 +4,15 @@ A Home Assistant custom integration for [Dashie](https://www.dashieapp.com), pro
 
 ## Features
 
-- **Camera Stream**: Enable RTSP streaming to view the tablets camera from other HA dashboards
-- **Screen Savers**:  Shows photos from your Home Assistant My Media folder, URL, or dedicated screensaver app
+- **Camera Stream**: Enable RTSP streaming to view the tablet's camera from other HA dashboards
+- **Screenshot**: Capture what's currently displayed on the tablet screen
+- **RTSP Stream Resolution**: Automatic go2rtc integration for credential-free camera restreaming
+- **Video Feeds**: Stream Frigate and other RTSP cameras to your tablets
+- **Screen Savers**: Shows photos from your Home Assistant My Media folder, URL, or dedicated screensaver app
 - **Auto-Discovery**: Devices are automatically discovered via SSDP when running on your network
-- **Sensors**: Ambient light sensor, screen brightness, memory usage, connection health
-- **Controls**: Screen on/off, kiosk lock, volume, brightness, reload dashboard, bring to foreground
+- **Sensors**: Ambient light sensor, screen brightness, memory usage, connection health, motion & face detection
+- **Controls**: Screen on/off, kiosk lock, volume, brightness, reload dashboard, bring to foreground, reboot
+- **Media Player**: Control music playback via Music Assistant
 - **Health Monitoring**: Track WebSocket connection status and performance metrics
 
 ## Installation
@@ -63,7 +67,18 @@ Each Dashie device creates the following entities:
 | Entity | Description |
 |--------|-------------|
 | `button.{device}_reload` | Reload the dashboard |
+| `button.{device}_reboot` | Reboot the device |
 | `button.{device}_bring_to_foreground` | Bring Dashie to front |
+
+### Image
+| Entity | Description |
+|--------|-------------|
+| `image.{device}_screenshot` | Current screenshot of the tablet display |
+
+### Text
+| Entity | Description |
+|--------|-------------|
+| `text.{device}_load_url` | Load a URL on the tablet |
 
 ### Camera (if RTSP enabled)
 | Entity | Description |
@@ -94,6 +109,18 @@ Each Dashie device creates the following entities:
 
 **Technical Details**: Dashie applies a horizontal flip filter using RootEncoder's RotationFilterRender to un-mirror the front camera at the source level. This provides correct orientation in all RTSP clients (VLC, WebRTC, etc.) without relying on metadata tags.
 
+### Media Player
+| Entity | Description |
+|--------|-------------|
+| `media_player.{device}` | Control music playback (play, pause, volume, next/prev) |
+
+### Video Feeds (if configured)
+| Entity | Description |
+|--------|-------------|
+| `camera.{device}_{feed}` | MJPEG proxy stream from Frigate or other RTSP sources |
+| `binary_sensor.{device}_{feed}_motion` | Motion detection from camera feed |
+| `binary_sensor.{device}_{feed}_face` | Face detection from camera feed |
+
 ## Services
 
 ### `dashie.send_command`
@@ -107,6 +134,17 @@ data:
   command: "loadUrl"
   value: "http://homeassistant.local:8123/dashboard-kitchen"
 ```
+
+## RTSP Stream Resolution
+
+The integration can automatically resolve camera entity RTSP URLs for direct playback on tablets. When a tablet requests a camera stream:
+
+1. Checks if go2rtc has a credential-free restream available
+2. Auto-registers cameras in go2rtc if not already configured
+3. Falls back to direct RTSP if no credentials are needed
+4. Returns MJPEG as a last resort for cameras requiring authentication
+
+This allows tablets to play camera feeds via ExoPlayer without exposing camera credentials.
 
 ## Troubleshooting
 
