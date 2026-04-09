@@ -29,6 +29,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _RELAY_PORT = 8555
 
+def _debug(msg: str) -> None:
+    """Write debug message to file (HA log not accessible via samba)."""
+    try:
+        with open("/config/rtsp_relay_debug.log", "a") as f:
+            f.write(f"{msg}\n")
+    except Exception:
+        pass
+
 
 def _compute_digest_response(
     username: str, password: str, realm: str, nonce: str,
@@ -97,11 +105,22 @@ class RtspRelayServer:
 
     async def start(self) -> None:
         """Start listening for RTSP client connections."""
-        self._server = await asyncio.start_server(
-            self._handle_client, "0.0.0.0", self._port,
-            reuse_address=True,
-        )
-        _LOGGER.info("RTSP relay listening on port %d", self._port)
+        _debug(f"start() called, port={self._port}")
+        try:
+            self._server = await asyncio.start_server(
+                self._handle_client, "0.0.0.0", self._port,
+                reuse_address=True,
+            )
+            _debug(f"start_server returned, is_serving={self._server.is_serving()}, sockets={self._server.sockets}")
+            # Explicitly start serving if not already
+            if not self._server.is_serving():
+                await self._server.start_serving()
+                _debug(f"start_serving() called, is_serving={self._server.is_serving()}")
+            _LOGGER.info("RTSP relay listening on port %d", self._port)
+        except Exception as e:
+            import traceback
+            _debug(f"start() FAILED: {e}\n{traceback.format_exc()}")
+            raise
 
     async def stop(self) -> None:
         """Stop the relay server."""
@@ -117,6 +136,7 @@ class RtspRelayServer:
         """Handle a single RTSP client connection."""
         peer = client_writer.get_extra_info("peername")
         _LOGGER.info("RTSP relay: client connected from %s", peer)
+        _debug(f"_handle_client entered from {peer}, streams={list(self._streams.keys())}")
 
         upstream_reader: asyncio.StreamReader | None = None
         upstream_writer: asyncio.StreamWriter | None = None
@@ -281,15 +301,17 @@ class RtspRelayServer:
                 if method == "TEARDOWN":
                     break
 
-        except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
-            _LOGGER.debug("RTSP relay: client %s disconnected", peer)
-        except Exception:
+        except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as e:
+            _debug(f"Client disconnected: {peer} ({type(e).__name__})")
+        except Exception as e:
+            import traceback
+            _debug(f"ERROR handling {peer}: {e}\n{traceback.format_exc()}")
             _LOGGER.exception("RTSP relay: error handling client %s", peer)
         finally:
             client_writer.close()
             if upstream_writer:
                 upstream_writer.close()
-            _LOGGER.info("RTSP relay: session ended for '%s' from %s", stream_name, peer)
+            _debug(f"Session ended: {stream_name} from {peer}")
 
     async def _relay_bidirectional(
         self,

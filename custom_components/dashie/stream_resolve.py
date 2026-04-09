@@ -25,24 +25,24 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .stream_proxy import _get_stream_source, _redact_url
-from .rtsp_relay import RtspRelayServer
+from .go2rtc_manager import Go2RtcManager
 
 _LOGGER = logging.getLogger(__name__)
 
-# go2rtc RTSP restream port (default)
+# go2rtc detection (legacy, used by _detect_go2rtc/_get_go2rtc_stream_name)
 _GO2RTC_API_PORT = 1984
-
-# Shared relay server instance — started in __init__.py, used here for stream registration
-_relay: RtspRelayServer | None = None
-
-
-def set_relay_server(relay: RtspRelayServer) -> None:
-    """Set the shared relay server instance (called from __init__.py)."""
-    global _relay
-    _relay = relay
 _GO2RTC_RTSP_PORT = 8554
-_go2rtc_available: bool | None = None  # None = not yet checked
+_go2rtc_available: bool | None = None
 _go2rtc_host: str | None = None
+
+# Shared go2rtc manager — initialized in __init__.py
+_manager: Go2RtcManager | None = None
+
+
+def set_go2rtc_manager(manager: Go2RtcManager) -> None:
+    """Set the shared go2rtc manager (called from __init__.py)."""
+    global _manager
+    _manager = manager
 
 
 async def _detect_go2rtc(hass: HomeAssistant) -> tuple[bool, str | None]:
@@ -326,10 +326,8 @@ class DashieStreamResolveView(HomeAssistantView):
                     "available": False,
                 })
 
-        # Streams with credentials — return raw URL directly.
-        # ExoPlayer's RtspMediaSource handles Digest/Basic auth when
-        # credentials are in the URI. buildExoPlayerUri() on Android
-        # properly encodes the userinfo for Uri.parse().
+        # Streams with credentials need go2rtc to strip creds for ExoPlayer.
+        # Use go2rtc manager: detect existing instance or start subprocess.
         if raw_rtsp and has_credentials:
             reachable = await _is_rtsp_reachable(raw_rtsp)
             if not reachable:
@@ -350,27 +348,23 @@ class DashieStreamResolveView(HomeAssistantView):
                 })
 
             # Prefer sub-stream for tablet playback
-            rtsp_url = raw_rtsp
-            if "/stream1" in rtsp_url:
-                rtsp_url = rtsp_url.replace("/stream1", "/stream2")
+            reg_url = raw_rtsp
+            if "/stream1" in reg_url:
+                reg_url = reg_url.replace("/stream1", "/stream2")
                 _LOGGER.debug(
                     "Substituted /stream1 → /stream2 for tablet-friendly resolution"
                 )
-            _LOGGER.info(
-                "Resolved %s → %s (direct with credentials)",
-                entity_id, _redact_url(rtsp_url),
-            )
-            return web.json_response({
-                "rtsp_url": rtsp_url,
-                "available": available,
-            })
-            go2rtc_ok, go2rtc_host = await _detect_go2rtc(hass)
-            if go2rtc_ok and go2rtc_host:
-                stream_name = await _get_go2rtc_stream_name(go2rtc_host, entity_id)
-                if stream_name:
+
+            # Register in go2rtc (existing or managed subprocess)
+            if _manager and await _manager.ensure():
+                rtsp_url_template = await _manager.register_stream(entity_id, reg_url)
+                if rtsp_url_template:
                     ha_ip = request.host.split(":")[0]
-                    rtsp_url = f"rtsp://{ha_ip}:{_GO2RTC_RTSP_PORT}/{stream_name}"
-                    _LOGGER.debug("Resolved %s → %s (via go2rtc)", entity_id, rtsp_url)
+                    rtsp_url = rtsp_url_template.replace("{ha_ip}", ha_ip)
+                    _LOGGER.info(
+                        "Resolved %s → %s (via go2rtc)",
+                        entity_id, rtsp_url,
+                    )
                     return web.json_response({
                         "rtsp_url": rtsp_url,
                         "available": available,

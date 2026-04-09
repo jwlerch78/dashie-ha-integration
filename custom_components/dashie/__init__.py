@@ -37,8 +37,8 @@ from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .device_name_views import register_device_name_views
 from .stream_proxy import register_stream_proxy_views
-from .stream_resolve import register_stream_resolve_views, set_relay_server
-from .rtsp_relay import RtspRelayServer
+from .stream_resolve import register_stream_resolve_views, set_go2rtc_manager
+from .go2rtc_manager import Go2RtcManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,7 +88,6 @@ _music_relay_registered = False
 _sensor_push_registered = False
 _device_name_registered = False
 _stream_resolve_registered = False
-_rtsp_relay_started = False
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -175,16 +174,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _stream_resolve_registered = True
         _LOGGER.info("Registered Dashie stream resolve endpoint")
 
-    if "rtsp_relay_attempted" not in hass.data.get(DOMAIN, {}):
-        hass.data.setdefault(DOMAIN, {})["rtsp_relay_attempted"] = True
-        try:
-            relay = RtspRelayServer()
-            set_relay_server(relay)
-            await relay.start()
-            hass.data[DOMAIN]["rtsp_relay"] = relay
-            _LOGGER.info("Started Dashie RTSP relay on port %d", relay.port)
-        except Exception as err:
-            _LOGGER.warning("Failed to start RTSP relay: %s", err)
+    if "go2rtc_manager" not in hass.data.get(DOMAIN, {}):
+        manager = Go2RtcManager(hass)
+        set_go2rtc_manager(manager)
+        hass.data.setdefault(DOMAIN, {})["go2rtc_manager"] = manager
+        # Detect existing go2rtc now (non-blocking, doesn't start subprocess yet)
+        if await manager.detect():
+            _LOGGER.info("go2rtc detected: %s", manager.api_url)
+        else:
+            _LOGGER.info("No existing go2rtc found — will start on-demand when needed")
 
     if not _feed_registry_registered:
         register_feed_registry_views(hass)
@@ -683,11 +681,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         multiplexer = hass.data[DOMAIN].pop("stream_multiplexer", None)
         if multiplexer:
             await multiplexer.async_shutdown()
-        # Shut down RTSP relay
-        relay = hass.data[DOMAIN].pop("rtsp_relay", None)
-        if relay:
-            await relay.stop()
-        hass.data[DOMAIN].pop("rtsp_relay_attempted", None)
+        # Shut down go2rtc manager (stops subprocess if we started one)
+        manager = hass.data[DOMAIN].pop("go2rtc_manager", None)
+        if manager:
+            await manager.shutdown()
 
     # Always return True so HA completes the deletion and removes from storage
     return True
