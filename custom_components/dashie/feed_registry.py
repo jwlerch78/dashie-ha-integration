@@ -232,10 +232,15 @@ class DashieFeedsListView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.Response:
         """Return all feed definitions, annotated with live camera availability and RTSP URLs."""
         from .stream_proxy import _get_stream_source
+        from .frigate_proxy import _detect_frigate, _get_session, _TIMEOUT
 
         hass = request.app["hass"]
         registry: FeedRegistry = hass.data["dashie"]["feed_registry"]
         feeds = registry.get_feeds()
+
+        # Fetch Frigate camera names (cached after first call)
+        frigate_cameras = await _get_frigate_camera_names()
+
         for feed in feeds.values():
             source_type = feed.get("stream_source_type", "entity")
             if source_type == "entity":
@@ -250,6 +255,10 @@ class DashieFeedsListView(HomeAssistantView):
             else:
                 feed["available"] = True
                 feed["rtsp_url"] = feed.get("stream_source_url", "")
+
+            # Annotate with Frigate camera info
+            _annotate_frigate_camera(feed, frigate_cameras)
+
         return web.json_response({"feeds": feeds})
 
     async def post(self, request: web.Request) -> web.Response:
@@ -313,6 +322,73 @@ def _notify_trigger_refresh(hass: HomeAssistant) -> None:
     for entry_data in hass.data.get(DOMAIN, {}).values():
         if hasattr(entry_data, "refresh_feed_triggers"):
             entry_data.refresh_feed_triggers()
+
+
+# ── Frigate Camera Detection ────────────────────────────────────
+
+# Cache of Frigate camera names (refreshed when None)
+_frigate_camera_cache: list[str] | None = None
+_frigate_cache_time: float = 0
+_FRIGATE_CACHE_TTL = 300  # 5 minutes
+
+
+async def _get_frigate_camera_names() -> list[str]:
+    """Fetch camera names from Frigate, with caching."""
+    global _frigate_camera_cache, _frigate_cache_time
+    from .frigate_proxy import _detect_frigate, _get_session, _TIMEOUT
+
+    now = time.time()
+    if _frigate_camera_cache is not None and (now - _frigate_cache_time) < _FRIGATE_CACHE_TTL:
+        return _frigate_camera_cache
+
+    base = await _detect_frigate()
+    if not base:
+        return []
+
+    try:
+        session = await _get_session()
+        async with session.get(f"{base}/api/config", timeout=_TIMEOUT) as resp:
+            if resp.status == 200:
+                config = await resp.json()
+                _frigate_camera_cache = list(config.get("cameras", {}).keys())
+                _frigate_cache_time = now
+                return _frigate_camera_cache
+    except Exception as err:
+        _LOGGER.debug("Failed to fetch Frigate cameras: %s", err)
+
+    return []
+
+
+def _annotate_frigate_camera(feed: dict, frigate_cameras: list[str]) -> None:
+    """Annotate a feed dict with Frigate camera info if it matches."""
+    if not frigate_cameras:
+        feed["is_frigate_camera"] = False
+        feed["frigate_camera_name"] = ""
+        return
+
+    # Match by go2rtc stream name (most common for Frigate feeds)
+    stream_url = feed.get("stream_source_url", "")
+    source_type = feed.get("stream_source_type", "")
+    label = feed.get("label", "").lower().replace(" ", "_")
+
+    # Check if the go2rtc stream name matches a Frigate camera
+    for cam_name in frigate_cameras:
+        if source_type == "go2rtc" and (
+            stream_url == cam_name
+            or stream_url.startswith(f"{cam_name}_")
+        ):
+            feed["is_frigate_camera"] = True
+            feed["frigate_camera_name"] = cam_name
+            return
+
+        # Also match by feed label (e.g., "Pool" matches frigate camera "pool")
+        if label == cam_name or label.replace("_", "") == cam_name.replace("_", ""):
+            feed["is_frigate_camera"] = True
+            feed["frigate_camera_name"] = cam_name
+            return
+
+    feed["is_frigate_camera"] = False
+    feed["frigate_camera_name"] = ""
 
 
 def register_feed_registry_views(hass: HomeAssistant) -> None:

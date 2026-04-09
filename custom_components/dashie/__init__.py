@@ -39,6 +39,7 @@ from .device_name_views import register_device_name_views
 from .stream_proxy import register_stream_proxy_views
 from .stream_resolve import register_stream_resolve_views, set_go2rtc_manager
 from .go2rtc_manager import Go2RtcManager
+from .frigate_proxy import register_frigate_proxy_views
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ _music_relay_registered = False
 _sensor_push_registered = False
 _device_name_registered = False
 _stream_resolve_registered = False
+_frigate_proxy_registered = False
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -102,6 +104,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
     global _music_token_registered, _immich_token_registered
     global _music_relay_registered, _device_name_registered
+    global _frigate_proxy_registered
 
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
@@ -244,6 +247,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_device_name_views(hass)
         _device_name_registered = True
         _LOGGER.info("Registered Dashie device name views")
+
+    if not _frigate_proxy_registered:
+        register_frigate_proxy_views(hass)
+        _frigate_proxy_registered = True
+        _LOGGER.info("Registered Dashie Frigate proxy views")
 
     # Set up centralized feed trigger subscriptions
     registry = hass.data[DOMAIN]["feed_registry"]
