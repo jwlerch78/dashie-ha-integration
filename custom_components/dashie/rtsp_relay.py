@@ -198,12 +198,16 @@ class RtspRelayServer:
 
                 # Build upstream request (same method, rewritten URI, same headers)
                 up_request_line = f"{method} {upstream_uri} {version}"
-                # Filter out any Host header from client, keep the rest
+                # Filter out Host header from client, keep the rest
                 up_headers = []
                 for line in lines[1:]:
-                    if line and not line.lower().startswith("host:"):
-                        up_headers.append(line)
-                up_request = up_request_line + "\r\n" + "\r\n".join(up_headers)
+                    if not line:
+                        continue  # skip empty lines (we'll add terminator ourselves)
+                    if line.lower().startswith("host:"):
+                        continue
+                    up_headers.append(line)
+                # RTSP requests must end with \r\n\r\n
+                up_request = up_request_line + "\r\n" + "\r\n".join(up_headers) + "\r\n\r\n"
 
                 _LOGGER.debug("RTSP relay: → upstream: %s %s", method, upstream_uri)
 
@@ -243,13 +247,8 @@ class RtspRelayServer:
                             _LOGGER.debug("RTSP relay: retrying %s with auth", method)
                             # Resend the request with Authorization header
                             auth_headers = up_headers.copy()
-                            # Insert Authorization before the empty trailing line
-                            if auth_headers and auth_headers[-1] == "":
-                                auth_headers.insert(-1, f"Authorization: {auth_value}")
-                            else:
-                                auth_headers.append(f"Authorization: {auth_value}")
-                                auth_headers.append("")
-                            auth_request = up_request_line + "\r\n" + "\r\n".join(auth_headers)
+                            auth_headers.append(f"Authorization: {auth_value}")
+                            auth_request = up_request_line + "\r\n" + "\r\n".join(auth_headers) + "\r\n\r\n"
                             upstream_writer.write(auth_request.encode())
                             await upstream_writer.drain()
 
