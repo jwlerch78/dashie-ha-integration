@@ -1,14 +1,14 @@
 """Lightweight RTSP relay for Dashie.
 
 Proxies RTSP connections from ExoPlayer tablets to upstream cameras,
-stripping credentials so tablets don't need to handle authentication.
+handling authentication so tablets don't need credentials.
 Replaces go2rtc for this specific use case.
 
 Each registered stream maps a name to an upstream RTSP URL with credentials.
 When a client connects and requests a stream, the relay:
-1. Connects upstream to the real camera (with credentials)
-2. Rewrites RTSP request URLs to point at the real camera
-3. Forwards all RTSP/RTP data bidirectionally (no transcoding)
+1. Connects upstream to the real camera
+2. Handles RTSP Digest/Basic auth with the camera
+3. Forwards RTSP responses (rewriting URLs) and RTP data to the client
 
 Only supports TCP interleaved mode (RTP over RTSP connection), which is
 what ExoPlayer uses with setForceUseRtpTcp(true).
@@ -21,12 +21,51 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, unquote
 
 _LOGGER = logging.getLogger(__name__)
 
 _RELAY_PORT = 8555
+
+
+def _compute_digest_response(
+    username: str, password: str, realm: str, nonce: str,
+    method: str, uri: str,
+) -> str:
+    """Compute HTTP Digest auth response (MD5, no qop)."""
+    ha1 = hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()
+    ha2 = hashlib.md5(f"{method}:{uri}".encode()).hexdigest()
+    return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
+
+
+def _build_auth_header(
+    username: str, password: str, method: str, uri: str,
+    www_authenticate: str,
+) -> str:
+    """Build an Authorization header from a WWW-Authenticate challenge."""
+    www_lower = www_authenticate.lower()
+    if www_lower.startswith("digest"):
+        # Parse realm and nonce from: Digest realm="...", nonce="..."
+        params: dict[str, str] = {}
+        for part in www_authenticate[7:].split(","):
+            part = part.strip()
+            if "=" in part:
+                k, v = part.split("=", 1)
+                params[k.strip().lower()] = v.strip().strip('"')
+        realm = params.get("realm", "")
+        nonce = params.get("nonce", "")
+        response = _compute_digest_response(username, password, realm, nonce, method, uri)
+        return (
+            f'Digest username="{username}", realm="{realm}", '
+            f'nonce="{nonce}", uri="{uri}", response="{response}"'
+        )
+    elif www_lower.startswith("basic"):
+        import base64
+        encoded = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return f"Basic {encoded}"
+    return ""
 
 
 class RtspRelayServer:
@@ -81,17 +120,15 @@ class RtspRelayServer:
         upstream_reader: asyncio.StreamReader | None = None
         upstream_writer: asyncio.StreamWriter | None = None
         stream_name: str | None = None
-        upstream_base_url: str | None = None  # e.g. rtsp://host:554
+        up_parsed = None  # parsed upstream URL
+        up_base_url: str = ""  # rtsp://host:port (no creds)
 
         try:
-            # Phase 1: Read RTSP requests from client, relay to upstream.
-            # We need to parse the first request to determine which stream
-            # the client wants, then connect upstream.
             while True:
-                # Read an RTSP request or interleaved RTP frame
+                # Read an RTSP request or interleaved RTP frame from client
                 first_byte = await client_reader.readexactly(1)
                 if first_byte == b"$":
-                    # Interleaved RTP frame: $<channel:1><length:2><data:length>
+                    # Interleaved RTP/RTCP: $<channel:1><length:2><data>
                     header = await client_reader.readexactly(3)
                     length = int.from_bytes(header[1:3], "big")
                     data = await client_reader.readexactly(length)
@@ -104,7 +141,6 @@ class RtspRelayServer:
                 request_data = first_byte + await _read_until_crlfcrlf(client_reader)
                 request_text = request_data.decode("utf-8", errors="replace")
 
-                # Parse the request line: METHOD rtsp://host:port/path RTSP/1.0
                 lines = request_text.split("\r\n")
                 if not lines:
                     break
@@ -113,35 +149,30 @@ class RtspRelayServer:
                     break
                 method, request_uri, version = parts
 
-                # Extract stream name from the URI path
-                parsed = urlparse(request_uri)
-                # Path is like /camera.pool_camera_sd_stream or /stream_name/trackID=0
-                path_parts = parsed.path.strip("/").split("/")
+                # Extract stream name from URI path
+                parsed_uri = urlparse(request_uri)
+                path_parts = parsed_uri.path.strip("/").split("/")
                 requested_name = path_parts[0] if path_parts else ""
 
+                # First request: resolve stream and connect upstream
                 if not stream_name:
                     stream_name = requested_name
                     upstream_url = self._streams.get(stream_name)
                     if not upstream_url:
-                        _LOGGER.warning(
-                            "RTSP relay: unknown stream '%s' from %s",
-                            stream_name, peer,
-                        )
-                        # Send 404 and close
+                        _LOGGER.warning("RTSP relay: unknown stream '%s'", stream_name)
                         client_writer.write(
-                            f"RTSP/1.0 404 Not Found\r\nCSeq: 1\r\n\r\n".encode()
+                            b"RTSP/1.0 404 Not Found\r\nCSeq: 1\r\n\r\n"
                         )
                         await client_writer.drain()
                         break
 
-                    # Connect upstream
                     up_parsed = urlparse(upstream_url)
                     up_host = up_parsed.hostname or ""
                     up_port = up_parsed.port or 554
-                    upstream_base_url = f"rtsp://{up_host}:{up_port}"
+                    up_base_url = f"rtsp://{up_host}:{up_port}"
 
                     _LOGGER.info(
-                        "RTSP relay: connecting upstream for '%s' → %s:%d",
+                        "RTSP relay: connecting upstream '%s' → %s:%d",
                         stream_name, up_host, up_port,
                     )
                     try:
@@ -149,67 +180,97 @@ class RtspRelayServer:
                             asyncio.open_connection(up_host, up_port), timeout=5.0
                         )
                     except Exception as e:
-                        _LOGGER.error(
-                            "RTSP relay: upstream connect failed for '%s': %s",
-                            stream_name, e,
-                        )
+                        _LOGGER.error("RTSP relay: upstream connect failed: %s", e)
                         client_writer.write(
-                            f"RTSP/1.0 503 Service Unavailable\r\nCSeq: 1\r\n\r\n".encode()
+                            b"RTSP/1.0 503 Service Unavailable\r\nCSeq: 1\r\n\r\n"
                         )
                         await client_writer.drain()
                         break
 
-                # Rewrite the request URI to point at the upstream camera
-                # Client sends: DESCRIBE rtsp://ha:8555/camera.pool/trackID=0 RTSP/1.0
-                # We send:      DESCRIBE rtsp://user:pass@camera:554/stream2/trackID=0 RTSP/1.0
-                up_parsed = urlparse(self._streams[stream_name])
-                # Preserve any sub-path from the client (e.g. /trackID=0)
+                # Build the upstream URI (no credentials in URL)
                 extra_path = "/".join(path_parts[1:]) if len(path_parts) > 1 else ""
-                up_path = up_parsed.path
+                upstream_path = up_parsed.path
                 if extra_path:
-                    up_path = up_path.rstrip("/") + "/" + extra_path
+                    upstream_path = upstream_path.rstrip("/") + "/" + extra_path
+                upstream_uri = f"{up_base_url}{upstream_path}"
 
-                rewritten_uri = urlunparse((
-                    up_parsed.scheme,
-                    up_parsed.netloc,  # includes user:pass@host:port
-                    up_path,
-                    up_parsed.params,
-                    up_parsed.query,
-                    up_parsed.fragment,
-                ))
-                rewritten_line = f"{method} {rewritten_uri} {version}"
-                rewritten_request = rewritten_line + "\r\n" + "\r\n".join(lines[1:])
+                # Build upstream request (same method, rewritten URI, same headers)
+                up_request_line = f"{method} {upstream_uri} {version}"
+                # Filter out any Host header from client, keep the rest
+                up_headers = []
+                for line in lines[1:]:
+                    if line and not line.lower().startswith("host:"):
+                        up_headers.append(line)
+                up_request = up_request_line + "\r\n" + "\r\n".join(up_headers)
 
-                # Forward to upstream
-                upstream_writer.write(rewritten_request.encode())
+                _LOGGER.debug("RTSP relay: → upstream: %s %s", method, upstream_uri)
+
+                # Send to upstream
+                upstream_writer.write(up_request.encode())
                 await upstream_writer.drain()
 
-                # Read response from upstream and forward to client
-                response = await _read_rtsp_response(upstream_reader)
-                if response is None:
+                # Read upstream response
+                response_data = await _read_rtsp_response(upstream_reader)
+                if response_data is None:
+                    _LOGGER.warning("RTSP relay: upstream closed during %s", method)
                     break
 
-                # Rewrite any upstream URLs in the response back to our relay URL
-                response_text = response.decode("utf-8", errors="replace")
-                if upstream_base_url:
-                    relay_base = f"rtsp://{parsed.hostname}:{self._port}"
-                    up_base_with_creds = f"{up_parsed.scheme}://{up_parsed.netloc}"
-                    response_text = response_text.replace(
-                        up_base_with_creds, f"{relay_base}/{stream_name}"
-                    )
-                    response_text = response_text.replace(
-                        upstream_base_url, f"{relay_base}/{stream_name}"
-                    )
+                response_text = response_data.decode("utf-8", errors="replace")
+                resp_lines = response_text.split("\r\n")
+                status_line = resp_lines[0] if resp_lines else ""
 
+                _LOGGER.debug("RTSP relay: ← upstream: %s", status_line)
+
+                # Handle 401 — authenticate with upstream using stored credentials
+                if " 401 " in status_line:
+                    www_auth = ""
+                    for rl in resp_lines:
+                        if rl.lower().startswith("www-authenticate:"):
+                            www_auth = rl.split(":", 1)[1].strip()
+                            # Prefer Digest over Basic
+                            if "digest" in www_auth.lower():
+                                break
+
+                    if www_auth and up_parsed and up_parsed.username:
+                        username = unquote(up_parsed.username)
+                        password = unquote(up_parsed.password or "")
+                        auth_value = _build_auth_header(
+                            username, password, method, upstream_uri, www_auth
+                        )
+                        if auth_value:
+                            _LOGGER.debug("RTSP relay: retrying %s with auth", method)
+                            # Resend the request with Authorization header
+                            auth_headers = up_headers.copy()
+                            # Insert Authorization before the empty trailing line
+                            if auth_headers and auth_headers[-1] == "":
+                                auth_headers.insert(-1, f"Authorization: {auth_value}")
+                            else:
+                                auth_headers.append(f"Authorization: {auth_value}")
+                                auth_headers.append("")
+                            auth_request = up_request_line + "\r\n" + "\r\n".join(auth_headers)
+                            upstream_writer.write(auth_request.encode())
+                            await upstream_writer.drain()
+
+                            # Read the real response
+                            response_data = await _read_rtsp_response(upstream_reader)
+                            if response_data is None:
+                                break
+                            response_text = response_data.decode("utf-8", errors="replace")
+                            resp_lines = response_text.split("\r\n")
+                            status_line = resp_lines[0] if resp_lines else ""
+                            _LOGGER.debug("RTSP relay: ← upstream (after auth): %s", status_line)
+
+                # Rewrite upstream URLs in response to relay URLs
+                relay_base = f"rtsp://{parsed_uri.hostname}:{self._port}/{stream_name}"
+                response_text = response_text.replace(up_base_url, relay_base)
+
+                # Forward response to client
                 client_writer.write(response_text.encode())
                 await client_writer.drain()
 
                 # After PLAY, switch to bidirectional binary relay
-                if method == "PLAY":
-                    _LOGGER.info(
-                        "RTSP relay: PLAY for '%s', starting bidirectional relay",
-                        stream_name,
-                    )
+                if method == "PLAY" and " 200 " in status_line:
+                    _LOGGER.info("RTSP relay: PLAY OK for '%s', starting data relay", stream_name)
                     await self._relay_bidirectional(
                         client_reader, client_writer,
                         upstream_reader, upstream_writer,
@@ -228,9 +289,7 @@ class RtspRelayServer:
             client_writer.close()
             if upstream_writer:
                 upstream_writer.close()
-            _LOGGER.info(
-                "RTSP relay: session ended for '%s' from %s", stream_name, peer
-            )
+            _LOGGER.info("RTSP relay: session ended for '%s' from %s", stream_name, peer)
 
     async def _relay_bidirectional(
         self,
@@ -243,7 +302,6 @@ class RtspRelayServer:
         """Bidirectional byte relay after PLAY — forward RTP/RTCP frames."""
 
         async def _upstream_to_client() -> None:
-            """Forward data from upstream camera to client tablet."""
             try:
                 while True:
                     data = await upstream_reader.read(65536)
@@ -255,7 +313,6 @@ class RtspRelayServer:
                 pass
 
         async def _client_to_upstream() -> None:
-            """Forward data from client tablet to upstream camera (RTCP, TEARDOWN)."""
             try:
                 while True:
                     data = await client_reader.read(65536)
@@ -266,7 +323,6 @@ class RtspRelayServer:
             except (ConnectionResetError, BrokenPipeError):
                 pass
 
-        # Run both directions concurrently; when either ends, cancel the other
         tasks = [
             asyncio.create_task(_upstream_to_client()),
             asyncio.create_task(_client_to_upstream()),
@@ -294,7 +350,6 @@ async def _read_until_crlfcrlf(reader: asyncio.StreamReader) -> bytes:
 
 async def _read_rtsp_response(reader: asyncio.StreamReader) -> bytes | None:
     """Read a complete RTSP response (headers + optional body via Content-Length)."""
-    # Read headers until \r\n\r\n
     header_buf = bytearray()
     while True:
         byte = await reader.readexactly(1)
@@ -302,7 +357,6 @@ async def _read_rtsp_response(reader: asyncio.StreamReader) -> bytes | None:
         if header_buf[-4:] == b"\r\n\r\n":
             break
 
-    # Check for Content-Length to read body
     headers_text = header_buf.decode("utf-8", errors="replace")
     content_length = 0
     for line in headers_text.split("\r\n"):
