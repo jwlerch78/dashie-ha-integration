@@ -94,6 +94,17 @@ _rtsp_relay_started = False
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Dashie integration."""
     hass.data.setdefault(DOMAIN, {})
+
+    # Start RTSP relay once, before any config entries load
+    try:
+        relay = RtspRelayServer(port=8555)
+        set_relay_server(relay)
+        await relay.start()
+        hass.data[DOMAIN]["rtsp_relay"] = relay
+        _LOGGER.info("Started Dashie RTSP relay on port 8555")
+    except Exception as err:
+        _LOGGER.warning("Failed to start RTSP relay: %s", err)
+
     return True
 
 
@@ -102,7 +113,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     global _media_api_registered, _stream_proxy_registered, _stream_resolve_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
     global _music_token_registered, _immich_token_registered
-    global _music_relay_registered, _device_name_registered, _rtsp_relay_started
+    global _music_relay_registered, _device_name_registered
 
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
@@ -175,15 +186,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _stream_resolve_registered = True
         _LOGGER.info("Registered Dashie stream resolve endpoint")
 
-    if not _rtsp_relay_started:
-        try:
-            relay = RtspRelayServer(port=8555)
-            set_relay_server(relay)
-            await relay.start()
-            _rtsp_relay_started = True
-            _LOGGER.info("Started Dashie RTSP relay on port 8555")
-        except Exception as err:
-            _LOGGER.warning("Failed to start RTSP relay: %s (relay disabled)", err)
+    # RTSP relay is started in async_setup() — no per-entry startup needed
 
     if not _feed_registry_registered:
         register_feed_registry_views(hass)
