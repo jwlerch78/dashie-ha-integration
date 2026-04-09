@@ -326,8 +326,10 @@ class DashieStreamResolveView(HomeAssistantView):
                     "available": False,
                 })
 
-        # Streams with credentials — use our RTSP relay to strip creds.
-        # The relay proxies TCP-interleaved RTSP without transcoding.
+        # Streams with credentials — return raw URL directly.
+        # ExoPlayer's RtspMediaSource handles Digest/Basic auth when
+        # credentials are in the URI. buildExoPlayerUri() on Android
+        # properly encodes the userinfo for Uri.parse().
         if raw_rtsp and has_credentials:
             reachable = await _is_rtsp_reachable(raw_rtsp)
             if not reachable:
@@ -341,35 +343,27 @@ class DashieStreamResolveView(HomeAssistantView):
                 })
 
             if check_only:
-                # Just confirm availability — don't register in relay yet
+                # Just confirm availability — don't register yet
                 return web.json_response({
                     "rtsp_url": None,
                     "available": available,
                 })
 
-            # Register in relay and return relay URL
-            if _relay is not None:
-                # Prefer sub-stream for tablet playback
-                reg_url = raw_rtsp
-                if "/stream1" in reg_url:
-                    reg_url = reg_url.replace("/stream1", "/stream2")
-                    _LOGGER.debug(
-                        "Substituted /stream1 → /stream2 for tablet-friendly resolution"
-                    )
-                _relay.register_stream(entity_id, reg_url)
-                ha_ip = request.host.split(":")[0]
-                rtsp_url = f"rtsp://{ha_ip}:{_relay.port}/{entity_id}"
-                _LOGGER.info(
-                    "Resolved %s → %s (via Dashie relay)",
-                    entity_id, _redact_url(rtsp_url),
+            # Prefer sub-stream for tablet playback
+            rtsp_url = raw_rtsp
+            if "/stream1" in rtsp_url:
+                rtsp_url = rtsp_url.replace("/stream1", "/stream2")
+                _LOGGER.debug(
+                    "Substituted /stream1 → /stream2 for tablet-friendly resolution"
                 )
-                return web.json_response({
-                    "rtsp_url": rtsp_url,
-                    "available": available,
-                })
-
-            # Fallback: try go2rtc if relay not available
-            _LOGGER.warning("RTSP relay not available, trying go2rtc fallback")
+            _LOGGER.info(
+                "Resolved %s → %s (direct with credentials)",
+                entity_id, _redact_url(rtsp_url),
+            )
+            return web.json_response({
+                "rtsp_url": rtsp_url,
+                "available": available,
+            })
             go2rtc_ok, go2rtc_host = await _detect_go2rtc(hass)
             if go2rtc_ok and go2rtc_host:
                 stream_name = await _get_go2rtc_stream_name(go2rtc_host, entity_id)

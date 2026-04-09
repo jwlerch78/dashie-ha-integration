@@ -99,7 +99,7 @@ class RtspRelayServer:
         """Start listening for RTSP client connections."""
         self._server = await asyncio.start_server(
             self._handle_client, "0.0.0.0", self._port,
-            reuse_port=True,
+            reuse_address=True,
         )
         _LOGGER.info("RTSP relay listening on port %d", self._port)
 

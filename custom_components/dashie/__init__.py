@@ -94,17 +94,6 @@ _rtsp_relay_started = False
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Dashie integration."""
     hass.data.setdefault(DOMAIN, {})
-
-    # Start RTSP relay once, before any config entries load
-    try:
-        relay = RtspRelayServer(port=8555)
-        set_relay_server(relay)
-        await relay.start()
-        hass.data[DOMAIN]["rtsp_relay"] = relay
-        _LOGGER.info("Started Dashie RTSP relay on port 8555")
-    except Exception as err:
-        _LOGGER.warning("Failed to start RTSP relay: %s", err)
-
     return True
 
 
@@ -186,7 +175,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _stream_resolve_registered = True
         _LOGGER.info("Registered Dashie stream resolve endpoint")
 
-    # RTSP relay is started in async_setup() — no per-entry startup needed
+    if "rtsp_relay_attempted" not in hass.data.get(DOMAIN, {}):
+        hass.data.setdefault(DOMAIN, {})["rtsp_relay_attempted"] = True
+        try:
+            relay = RtspRelayServer()
+            set_relay_server(relay)
+            await relay.start()
+            hass.data[DOMAIN]["rtsp_relay"] = relay
+            _LOGGER.info("Started Dashie RTSP relay on port %d", relay.port)
+        except Exception as err:
+            _LOGGER.warning("Failed to start RTSP relay: %s", err)
 
     if not _feed_registry_registered:
         register_feed_registry_views(hass)
@@ -685,6 +683,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         multiplexer = hass.data[DOMAIN].pop("stream_multiplexer", None)
         if multiplexer:
             await multiplexer.async_shutdown()
+        # Shut down RTSP relay
+        relay = hass.data[DOMAIN].pop("rtsp_relay", None)
+        if relay:
+            await relay.stop()
+        hass.data[DOMAIN].pop("rtsp_relay_attempted", None)
 
     # Always return True so HA completes the deletion and removes from storage
     return True
