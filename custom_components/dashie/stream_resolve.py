@@ -302,33 +302,10 @@ class DashieStreamResolveView(HomeAssistantView):
             and "@" in raw_rtsp.split("//", 1)[-1].split("/", 1)[0]
         )
 
-        # Credential-free streams: return direct URL (bypass go2rtc).
-        # go2rtc adds latency and can drop frames for some RTSP servers
-        # (e.g. Android camera servers). Direct is better when possible.
-        if raw_rtsp and not has_credentials:
-            reachable = await _is_rtsp_reachable(raw_rtsp)
-            if reachable:
-                _LOGGER.info(
-                    "Resolved %s → %s (direct, no credentials)",
-                    entity_id, _redact_url(raw_rtsp),
-                )
-                return web.json_response({
-                    "rtsp_url": raw_rtsp,
-                    "available": available,
-                })
-            else:
-                _LOGGER.info(
-                    "Direct RTSP unreachable for %s: %s",
-                    entity_id, _redact_url(raw_rtsp),
-                )
-                return web.json_response({
-                    "rtsp_url": None,
-                    "available": False,
-                })
-
-        # Streams with credentials need go2rtc to strip creds for ExoPlayer.
-        # Use go2rtc manager: detect existing instance or start subprocess.
-        if raw_rtsp and has_credentials:
+        # All RTSP streams go through go2rtc — it handles auth for credentialed
+        # streams and fixes malformed Content-Base headers from some RTSP servers
+        # (e.g. pedroSG94 returns Content-Base: rtsp://:0/ which breaks ExoPlayer).
+        if raw_rtsp:
             reachable = await _is_rtsp_reachable(raw_rtsp)
             if not reachable:
                 _LOGGER.info(

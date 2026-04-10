@@ -28,6 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Frigate API candidates (Docker hostnames)
 _FRIGATE_CANDIDATES = [
+    "http://ccab4aaf-frigate-fa:5000",
     "http://ccab4aaf-frigate:5000",
     "http://frigate:5000",
     "http://localhost:5000",
