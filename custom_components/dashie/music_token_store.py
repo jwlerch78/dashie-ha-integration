@@ -37,12 +37,11 @@ class MusicTokenStore:
         self._data = data or {}
 
     def get_token(self) -> dict:
-        """Return {token, ma_url} or empty dict."""
+        """Return {token, ma_url} or empty dict. Returns token even without ma_url."""
         token = self._data.get("token", "")
-        ma_url = self._data.get("ma_url", "")
-        if token and ma_url:
-            return {"token": token, "ma_url": ma_url}
-        return {}
+        if not token:
+            return {}
+        return {"token": token, "ma_url": self._data.get("ma_url", "")}
 
     async def async_save_token(self, token: str, ma_url: str) -> None:
         """Store the MA JWT token and URL."""
