@@ -14,10 +14,12 @@ from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
     API_SET_SCREENSAVER_MODE,
+    API_SET_SCREEN_OFF_METHOD,
     API_SET_HA_MEDIA_FOLDER,
     API_SET_STRING_SETTING,
     SETTING_MOTION_WAKE_MODE,
     MOTION_WAKE_MODES,
+    SCREEN_OFF_METHODS,
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
@@ -39,6 +41,7 @@ async def async_setup_entry(
         DashieScreensaverModeSelect(coordinator, device_id),
         DashieScreensaverPhotoFolderSelect(coordinator, device_id, hass),
         DashieMotionWakeModeSelect(coordinator, device_id),
+        DashieScreenOffMethodSelect(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -208,5 +211,41 @@ class DashieMotionWakeModeSelect(DashieEntity, SelectEntity):
                 break
         await self.coordinator.send_command(
             API_SET_STRING_SETTING, key=SETTING_MOTION_WAKE_MODE, value=mode_key
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class DashieScreenOffMethodSelect(DashieEntity, SelectEntity):
+    """Screen off method select - overlay (fast wake) vs hardware (real off)."""
+
+    _attr_icon = "mdi:monitor-off"
+    _attr_translation_key = "screen_off_method"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the select."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_screen_off_method"
+        self._attr_name = "Screen Off Method"
+        self._attr_options = list(SCREEN_OFF_METHODS.values())
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the current screen off method."""
+        if self.coordinator.data:
+            method = self.coordinator.data.get("screenOffMethod", "overlay")
+            return SCREEN_OFF_METHODS.get(method, "Overlay (fast wake)")
+        return None
+
+    async def async_select_option(self, option: str) -> None:
+        """Set the screen off method."""
+        # Find the API value for this display option
+        method_key = "overlay"
+        for key, value in SCREEN_OFF_METHODS.items():
+            if value == option:
+                method_key = key
+                break
+        await self.coordinator.send_command(
+            API_SET_SCREEN_OFF_METHOD, method=method_key
         )
         await self.coordinator.async_request_refresh()

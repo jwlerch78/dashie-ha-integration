@@ -30,6 +30,9 @@ API_SCREEN_OFF = "screenOff"
 API_SET_BRIGHTNESS = "setStringSetting"  # key=screenBrightness, value=0-255
 API_SET_DARK_MODE = "setDarkMode"
 
+# Screen off method
+API_SET_SCREEN_OFF_METHOD = "setScreenOffMethod"
+
 # Screensaver
 API_START_SCREENSAVER = "startScreensaver"
 API_STOP_SCREENSAVER = "stopScreensaver"
@@ -111,6 +114,12 @@ SETTING_RTSP_SOFTWARE_ENCODING = "rtspSoftwareEncoding"
 
 # Screensaver modes
 SCREENSAVER_MODES = ["dim", "black", "url", "photos", "app"]
+
+# Screen off methods
+SCREEN_OFF_METHODS = {
+    "overlay": "Overlay (fast wake)",
+    "hardware": "Hardware (real off)",
+}
 
 # Motion wake modes (matching Android enum)
 MOTION_WAKE_MODES = {
