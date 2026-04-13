@@ -366,13 +366,14 @@ def _annotate_frigate_camera(feed: dict, frigate_cameras: list[str]) -> None:
         feed["frigate_camera_name"] = ""
         return
 
-    # Match by go2rtc stream name (most common for Frigate feeds)
     stream_url = feed.get("stream_source_url", "")
     source_type = feed.get("stream_source_type", "")
     label = feed.get("label", "").lower().replace(" ", "_")
+    entity_id = feed.get("camera_entity_id", "").lower()
+    feed_id = feed.get("id", "").lower()
 
-    # Check if the go2rtc stream name matches a Frigate camera
     for cam_name in frigate_cameras:
+        # Match by go2rtc stream name
         if source_type == "go2rtc" and (
             stream_url == cam_name
             or stream_url.startswith(f"{cam_name}_")
@@ -381,14 +382,29 @@ def _annotate_frigate_camera(feed: dict, frigate_cameras: list[str]) -> None:
             feed["frigate_camera_name"] = cam_name
             return
 
-        # Also match by feed label (e.g., "Pool" matches frigate camera "pool")
-        if label == cam_name or label.replace("_", "") == cam_name.replace("_", ""):
+        # Match by feed label (e.g., "Family Room" → "family_room")
+        if label == cam_name or label.replace(" ", "_") == cam_name:
+            feed["is_frigate_camera"] = True
+            feed["frigate_camera_name"] = cam_name
+            return
+
+        # Match by feed ID (e.g., "family_room")
+        if feed_id == cam_name:
+            feed["is_frigate_camera"] = True
+            feed["frigate_camera_name"] = cam_name
+            return
+
+        # Match by camera entity ID containing the camera name
+        # e.g., "camera.family_room_camera_hd_stream" contains "family_room"
+        if entity_id and cam_name in entity_id:
             feed["is_frigate_camera"] = True
             feed["frigate_camera_name"] = cam_name
             return
 
     feed["is_frigate_camera"] = False
     feed["frigate_camera_name"] = ""
+    _LOGGER.debug("Feed '%s' did not match any Frigate camera (label=%s, entity=%s, id=%s)",
+                  feed.get("label"), label, entity_id, feed_id)
 
 
 def register_feed_registry_views(hass: HomeAssistant) -> None:

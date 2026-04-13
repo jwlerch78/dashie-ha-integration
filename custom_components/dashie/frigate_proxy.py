@@ -172,8 +172,7 @@ class FrigateRecordingSummaryView(HomeAssistantView):
     name = "api:dashie:frigate:recordings:summary"
     requires_auth = True
 
-    async def get(self, request: web.Request) -> web.Response:
-        camera = request.match_info["camera"]
+    async def get(self, request: web.Request, camera: str) -> web.Response:
         params = {}
         for key in ("after", "before"):
             val = request.query.get(key)
@@ -190,10 +189,7 @@ class FrigateClipView(HomeAssistantView):
     name = "api:dashie:frigate:clip"
     requires_auth = True
 
-    async def get(self, request: web.Request) -> web.StreamResponse:
-        camera = request.match_info["camera"]
-        start = request.match_info["start"]
-        end = request.match_info["end"]
+    async def get(self, request: web.Request, camera: str, start: str, end: str) -> web.StreamResponse:
         return await _proxy_stream(request, f"/api/{camera}/start/{start}/end/{end}/clip.mp4")
 
 
@@ -204,8 +200,7 @@ class FrigateEventClipView(HomeAssistantView):
     name = "api:dashie:frigate:event:clip"
     requires_auth = True
 
-    async def get(self, request: web.Request) -> web.StreamResponse:
-        event_id = request.match_info["event_id"]
+    async def get(self, request: web.Request, event_id: str) -> web.StreamResponse:
         return await _proxy_stream(request, f"/api/events/{event_id}/clip.mp4")
 
 
@@ -216,8 +211,7 @@ class FrigateEventThumbnailView(HomeAssistantView):
     name = "api:dashie:frigate:event:thumbnail"
     requires_auth = True
 
-    async def get(self, request: web.Request) -> web.StreamResponse:
-        event_id = request.match_info["event_id"]
+    async def get(self, request: web.Request, event_id: str) -> web.StreamResponse:
         return await _proxy_stream(request, f"/api/events/{event_id}/thumbnail.jpg")
 
 
