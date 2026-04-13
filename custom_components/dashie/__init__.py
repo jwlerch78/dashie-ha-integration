@@ -627,6 +627,73 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         await _hide_timer_from_devices(tid, slot_num)
         _LOGGER.info("Cancelled timer %s", label)
 
+    # ── Generic config service ────────────────────────────────────────
+    # Accepts key-value pairs and routes each to the appropriate store.
+    # Supported keys:
+    #   ma_token  → MusicTokenStore (updates token, preserves existing ma_url)
+    #   ma_url    → MusicTokenStore (updates url, preserves existing token)
+    #   immich_token → ImmichTokenStore (updates token, preserves existing url/albums)
+    #   immich_url   → ImmichTokenStore (updates url, preserves existing token/albums)
+
+    CONFIG_KEY_HANDLERS = {
+        "ma_token": "music",
+        "ma_url": "music",
+        "immich_token": "immich",
+        "immich_url": "immich",
+    }
+
+    async def async_set_config(call: ServiceCall) -> None:
+        """Set configuration values in the appropriate central stores."""
+        data = dict(call.data)
+        handled = set()
+
+        # Group updates by store
+        music_updates = {}
+        immich_updates = {}
+
+        for key, value in data.items():
+            handler = CONFIG_KEY_HANDLERS.get(key)
+            if handler == "music":
+                music_updates[key] = value
+                handled.add(key)
+            elif handler == "immich":
+                immich_updates[key] = value
+                handled.add(key)
+
+        unhandled = set(data.keys()) - handled
+        if unhandled:
+            _LOGGER.warning("set_config: unknown keys ignored: %s", unhandled)
+
+        # Apply music token updates
+        if music_updates:
+            store: MusicTokenStore | None = hass.data.get(DOMAIN, {}).get("music_token_store")
+            if store is None:
+                _LOGGER.error("set_config: MusicTokenStore not initialized")
+            else:
+                existing = store.get_token()
+                token = music_updates.get("ma_token", existing.get("token", ""))
+                ma_url = music_updates.get("ma_url", existing.get("ma_url", ""))
+                if token:
+                    await store.async_save_token(token, ma_url)
+                    _LOGGER.info("set_config: updated music token (url=%s)", ma_url)
+                else:
+                    _LOGGER.warning("set_config: ma_token is empty, skipping")
+
+        # Apply immich token updates
+        if immich_updates:
+            store: ImmichTokenStore | None = hass.data.get(DOMAIN, {}).get("immich_token_store")
+            if store is None:
+                _LOGGER.error("set_config: ImmichTokenStore not initialized")
+            else:
+                existing = store.get_token()
+                token = immich_updates.get("immich_token", existing.get("token", ""))
+                server_url = immich_updates.get("immich_url", existing.get("server_url", ""))
+                if token:
+                    await store.async_save_token(token, server_url, existing.get("selected_albums", ""))
+                    _LOGGER.info("set_config: updated immich token (url=%s)", server_url)
+                else:
+                    _LOGGER.warning("set_config: immich_token is empty, skipping")
+
     # Register all services
     hass.services.async_register(DOMAIN, SERVICE_SEND_COMMAND, async_send_command)
     hass.services.async_register(DOMAIN, SERVICE_LOAD_URL, async_load_url)
@@ -639,6 +706,9 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_START_TIMER, async_start_timer)
     hass.services.async_register(DOMAIN, SERVICE_PAUSE_TIMER, async_pause_timer)
     hass.services.async_register(DOMAIN, SERVICE_CANCEL_TIMER, async_cancel_timer)
+
+    # Config service
+    hass.services.async_register(DOMAIN, "set_config", async_set_config)
 
     _LOGGER.info("Registered Dashie services")
 
