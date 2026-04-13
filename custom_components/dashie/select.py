@@ -226,7 +226,7 @@ class DashieScreenOffMethodSelect(DashieEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_screen_off_method"
-        self._attr_name = "Screen Off Method"
+        self._attr_name = "Screen Off Behavior"
         self._attr_options = list(SCREEN_OFF_METHODS.values())
 
     @property
@@ -234,7 +234,7 @@ class DashieScreenOffMethodSelect(DashieEntity, SelectEntity):
         """Return the current screen off method."""
         if self.coordinator.data:
             method = self.coordinator.data.get("screenOffMethod", "overlay")
-            return SCREEN_OFF_METHODS.get(method, "Overlay (fast wake)")
+            return SCREEN_OFF_METHODS.get(method, "Black Overlay")
         return None
 
     async def async_select_option(self, option: str) -> None:

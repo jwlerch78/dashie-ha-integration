@@ -117,8 +117,8 @@ SCREENSAVER_MODES = ["dim", "black", "url", "photos", "app"]
 
 # Screen off methods
 SCREEN_OFF_METHODS = {
-    "overlay": "Overlay (fast wake)",
-    "hardware": "Hardware (real off)",
+    "overlay": "Black Overlay",
+    "hardware": "Power Off Screen",
 }
 
 # Motion wake modes (matching Android enum)
