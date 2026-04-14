@@ -150,10 +150,13 @@ async def _proxy_clip_transcoded(request: web.Request, path: str) -> web.StreamR
             "-vf", "scale=-2:720",
             "-c:v", "libx264",
             "-preset", "ultrafast",
-            "-crf", "23",
+            "-tune", "fastdecode",
+            "-crf", "26",
+            "-g", "30",                              # Keyframe every 30 frames (~1s)
             "-c:a", "aac",
-            "-b:a", "128k",
+            "-b:a", "96k",
             "-movflags", "frag_keyframe+empty_moov",
+            "-frag_duration", "1000000",             # 1-second fragments for faster start
             "-f", "mp4",
             "-loglevel", "warning",
             "pipe:1",

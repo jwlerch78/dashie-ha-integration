@@ -332,6 +332,19 @@ class DashieStreamResolveView(HomeAssistantView):
                     "Substituted /stream1 → /stream2 for tablet-friendly resolution"
                 )
 
+            # Credential-free sources: connect ExoPlayer directly (lower latency,
+            # avoids go2rtc TCP relay buffer that adds burstiness).
+            # Credentialed sources: must go through go2rtc to strip credentials.
+            if not has_credentials:
+                _LOGGER.info(
+                    "Resolved %s → %s (direct, no credentials)",
+                    entity_id, _redact_url(reg_url),
+                )
+                return web.json_response({
+                    "rtsp_url": reg_url,
+                    "available": available,
+                })
+
             # Register in go2rtc (existing or managed subprocess)
             if _manager and await _manager.ensure():
                 rtsp_url_template = await _manager.register_stream(entity_id, reg_url)
