@@ -58,6 +58,7 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
     _mode_display_map = {
         "dim": "Dim",
         "black": "Black",
+        "off": "Screen Off",
         "url": "URL",
         "photos": "Photos",
         "app": "App",
@@ -68,7 +69,7 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_screensaver_mode"
         self._attr_name = "Screensaver: Mode"
-        self._attr_options = ["Dim", "Black", "URL", "Photos", "App"]
+        self._attr_options = ["Dim", "Black", "Screen Off", "URL", "Photos", "App"]
 
     @property
     def current_option(self) -> str | None:
@@ -79,10 +80,12 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
             return self._mode_display_map.get(mode, mode.capitalize() if mode else "Dim")
         return None
 
+    # Reverse map: display value -> API value
+    _mode_api_map = {v: k for k, v in _mode_display_map.items()}
+
     async def async_select_option(self, option: str) -> None:
         """Set the screensaver mode."""
-        # Convert display value to API value (lowercase)
-        mode = option.lower()
+        mode = self._mode_api_map.get(option, option.lower())
         await self.coordinator.send_command(API_SET_SCREENSAVER_MODE, mode=mode)
         await self.coordinator.async_request_refresh()
 

@@ -89,7 +89,7 @@ async def _proxy_json(request: web.Request, path: str, params: dict | None = Non
 
 
 async def _proxy_stream(request: web.Request, path: str) -> web.StreamResponse:
-    """Proxy a binary stream (clip/thumbnail) from Frigate."""
+    """Proxy a binary stream (thumbnail) from Frigate — no transcoding."""
     base = await _detect_frigate()
     if not base:
         return web.json_response({"error": "Frigate not available"}, status=502)
@@ -104,7 +104,7 @@ async def _proxy_stream(request: web.Request, path: str) -> web.StreamResponse:
             response = web.StreamResponse(
                 status=200,
                 headers={
-                    "Content-Type": resp.headers.get("Content-Type", "video/mp4"),
+                    "Content-Type": resp.headers.get("Content-Type", "application/octet-stream"),
                 },
             )
             if "Content-Length" in resp.headers:
@@ -117,6 +117,77 @@ async def _proxy_stream(request: web.Request, path: str) -> web.StreamResponse:
             return response
     except Exception as err:
         _LOGGER.error("Frigate stream proxy error (%s): %s", path, err)
+        return web.json_response({"error": str(err)}, status=502)
+
+
+async def _proxy_clip_transcoded(request: web.Request, path: str) -> web.StreamResponse:
+    """Fetch a clip from Frigate and transcode to 720p via FFmpeg for tablet playback.
+
+    Frigate records at the camera's native resolution (e.g., 2560x1440) which may
+    exceed tablet hardware decoder capabilities. This pipes the clip through FFmpeg
+    to scale to 720p with fast encoding settings.
+    """
+    import asyncio
+    import shutil
+
+    base = await _detect_frigate()
+    if not base:
+        return web.json_response({"error": "Frigate not available"}, status=502)
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        _LOGGER.warning("FFmpeg not found, falling back to direct proxy")
+        return await _proxy_stream(request, path)
+
+    url = f"{base}{path}"
+
+    try:
+        # Pipe Frigate clip through FFmpeg: scale to 720p, fast encode, stream MP4
+        # -movflags frag_keyframe+empty_moov enables streaming (fragmented MP4)
+        process = await asyncio.create_subprocess_exec(
+            ffmpeg_bin,
+            "-i", url,
+            "-vf", "scale=-2:720",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "frag_keyframe+empty_moov",
+            "-f", "mp4",
+            "-loglevel", "warning",
+            "pipe:1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "video/mp4",
+            },
+        )
+        await response.prepare(request)
+
+        # Stream FFmpeg output to the client
+        while True:
+            chunk = await process.stdout.read(65536)
+            if not chunk:
+                break
+            await response.write(chunk)
+
+        await process.wait()
+
+        # Log any FFmpeg errors
+        stderr = await process.stderr.read()
+        if process.returncode != 0 and stderr:
+            _LOGGER.warning("FFmpeg transcode warning: %s", stderr.decode()[:500])
+
+        await response.write_eof()
+        return response
+
+    except Exception as err:
+        _LOGGER.error("Frigate clip transcode error (%s): %s", path, err)
         return web.json_response({"error": str(err)}, status=502)
 
 
@@ -190,7 +261,7 @@ class FrigateClipView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request, camera: str, start: str, end: str) -> web.StreamResponse:
-        return await _proxy_stream(request, f"/api/{camera}/start/{start}/end/{end}/clip.mp4")
+        return await _proxy_clip_transcoded(request, f"/api/{camera}/start/{start}/end/{end}/clip.mp4")
 
 
 class FrigateEventClipView(HomeAssistantView):
@@ -201,7 +272,7 @@ class FrigateEventClipView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request, event_id: str) -> web.StreamResponse:
-        return await _proxy_stream(request, f"/api/events/{event_id}/clip.mp4")
+        return await _proxy_clip_transcoded(request, f"/api/events/{event_id}/clip.mp4")
 
 
 class FrigateEventThumbnailView(HomeAssistantView):
