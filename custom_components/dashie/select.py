@@ -57,7 +57,7 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
     # Map API values to display values
     _mode_display_map = {
         "dim": "Dim",
-        "black": "Black",
+        "black": "Black Overlay",
         "off": "Screen Off",
         "url": "URL",
         "photos": "Photos",
@@ -69,7 +69,7 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_screensaver_mode"
         self._attr_name = "Screensaver: Mode"
-        self._attr_options = ["Dim", "Black", "Screen Off", "URL", "Photos", "App"]
+        self._attr_options = ["Dim", "Black Overlay", "Screen Off", "URL", "Photos", "App"]
 
     @property
     def current_option(self) -> str | None:
