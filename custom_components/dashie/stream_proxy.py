@@ -57,6 +57,20 @@ _vaapi_device: str | None = None  # e.g. /dev/dri/renderD128
 # Regex to match credentials in RTSP URLs: rtsp://user:pass@host
 _RTSP_CRED_RE = re.compile(r"(rtsp://)([^@]+)@", re.IGNORECASE)
 
+# Latest-frame cache — populated by the MJPEG stream pipeline, consumed by
+# the snapshot endpoint below. Gives the snapshot endpoint a hot path (≈5ms)
+# whenever a stream is active or recently ran. Dict assignment is atomic in
+# CPython; no lock needed.
+# Key: entity_id, Value: (jpeg_bytes, monotonic_timestamp)
+_latest_frame: dict[str, tuple[bytes, float]] = {}
+# Snapshot freshness: cache hit older than this triggers a one-shot ffmpeg
+# grab. 60s balances serving recently-viewed cameras quickly vs. returning
+# stale data when a camera has been dark for a while.
+SNAPSHOT_CACHE_TTL = 60.0
+# One-shot ffmpeg timeout — keep short since RTSP first-frame can take 1-2s
+# and we'd rather return a cached-but-missing 503 than hold the client.
+SNAPSHOT_FFMPEG_TIMEOUT = 5.0
+
 
 def _redact_url(url: str) -> str:
     """Redact credentials from RTSP URLs for safe logging."""
@@ -543,6 +557,10 @@ async def _pipe_frames_to_response(
                     stats["unique_bytes"] = len(jpeg_data)
                 prev_frame = jpeg_data
                 frame_buf.append(jpeg_data)
+                # Update latest-frame cache for the snapshot endpoint.
+                # Dict assignment is atomic; no lock required.
+                if entity_id and entity_id != "unknown":
+                    _latest_frame[entity_id] = (jpeg_data, now_r)
 
     reader_task = asyncio.ensure_future(_reader())
     client_gone = False
@@ -711,7 +729,185 @@ async def _pipe_frames_to_response(
     return client_gone
 
 
+async def _grab_single_frame(
+    stream_source: str, hw_accel: str, timeout: float = SNAPSHOT_FFMPEG_TIMEOUT,
+) -> bytes | None:
+    """Spawn a short-lived ffmpeg to pull exactly one JPEG frame from an RTSP
+    source. Used by the snapshot endpoint on cache miss.
+
+    Returns the JPEG bytes, or None on any failure (timeout, ffmpeg error,
+    empty output). Keeps the command minimal — no rate/scale filters; the
+    client can resample if it wants smaller thumbnails.
+    """
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-fflags", "+nobuffer+discardcorrupt",
+        "-err_detect", "ignore_err",
+    ]
+    # Match the MJPEG streamer's hardware decode options so we stay on the
+    # same codepath; for a single frame the encode is always software mjpeg.
+    if hw_accel == "vaapi" and _vaapi_device:
+        cmd.extend([
+            "-hwaccel", "vaapi",
+            "-hwaccel_device", _vaapi_device,
+            "-hwaccel_output_format", "vaapi",
+        ])
+    elif hw_accel == "cuda":
+        cmd.extend([
+            "-hwaccel", "cuda",
+            "-hwaccel_output_format", "cuda",
+        ])
+    elif hw_accel == "v4l2m2m":
+        cmd.extend(["-c:v", "h264_v4l2m2m"])
+
+    if stream_source.startswith("rtsp://"):
+        cmd.extend([
+            "-rtsp_transport", "tcp",
+            "-timeout", "3000000",
+        ])
+
+    # If hardware path outputs GPU surface format, download to main memory
+    # so the mjpeg encoder sees regular frames.
+    vf = None
+    if hw_accel == "vaapi" and _vaapi_device:
+        vf = "hwdownload,format=nv12"
+    elif hw_accel == "cuda":
+        vf = "hwdownload,format=nv12"
+
+    cmd.extend(["-i", stream_source])
+    if vf:
+        cmd.extend(["-vf", vf])
+    cmd.extend([
+        "-frames:v", "1",
+        "-c:v", "mjpeg",
+        "-q:v", "5",
+        "-f", "image2pipe",
+        "-",
+    ])
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except Exception:
+        _LOGGER.exception("Snapshot: failed to launch ffmpeg")
+        return None
+
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+        _LOGGER.debug("Snapshot: ffmpeg timed out after %ss", timeout)
+        return None
+
+    if proc.returncode != 0 or not stdout:
+        _LOGGER.debug(
+            "Snapshot: ffmpeg exited rc=%s with %d bytes",
+            proc.returncode, len(stdout or b""),
+        )
+        return None
+
+    # stdout may contain a bit of trailing image2pipe noise; trust the JPEG
+    # SOI/EOI markers to bound the payload.
+    soi = stdout.find(_JPEG_SOI)
+    eoi = stdout.find(_JPEG_EOI, soi + 2) if soi >= 0 else -1
+    if soi < 0 or eoi < 0:
+        return None
+    return stdout[soi:eoi + 2]
+
+
+class DashieSnapshotView(HomeAssistantView):
+    """Serve a single JPEG snapshot for a camera entity.
+
+    Fast path: if the MJPEG stream is active (or recently ran), the
+    latest-frame cache has a byte-identical copy of the newest decoded
+    frame — served in ~5ms.
+
+    Slow path: no cached frame (cold start, or cache expired) → spawn a
+    one-shot ffmpeg to grab a single frame from the RTSP source. Costs
+    ~500–1500ms but produces a fresh frame.
+
+    The Android client uses this endpoint to paint a placeholder ahead of
+    the MJPEG stream attach, removing the "black box for 1-3s" first
+    impression on camera cards.
+    """
+
+    url = "/api/dashie/stream/snapshot/{entity_id:.*}"
+    name = "api:dashie:stream:snapshot"
+    requires_auth = False  # Matches DashieMjpegStreamView for browser testing
+
+    async def get(self, request: web.Request, entity_id: str) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+
+        # Fast path: serve from the in-memory frame cache if fresh enough.
+        cached = _latest_frame.get(entity_id)
+        now = time.monotonic()
+        if cached is not None and (now - cached[1]) < SNAPSHOT_CACHE_TTL:
+            age_ms = int((now - cached[1]) * 1000)
+            _LOGGER.debug(
+                "Snapshot [%s]: cache hit (%d bytes, %dms old)",
+                entity_id, len(cached[0]), age_ms,
+            )
+            return web.Response(
+                body=cached[0],
+                headers={
+                    "Content-Type": "image/jpeg",
+                    "Cache-Control": "no-cache",
+                    "X-Dashie-Snapshot-Source": "cache",
+                    "X-Dashie-Snapshot-Age-Ms": str(age_ms),
+                },
+            )
+
+        # Slow path: resolve the entity's stream source and grab a single frame.
+        direct_source = request.query.get("source")
+        if direct_source:
+            stream_source = direct_source
+        else:
+            state = hass.states.get(entity_id)
+            if not state or not entity_id.startswith("camera."):
+                return web.json_response(
+                    {"error": f"Camera entity '{entity_id}' not found"}, status=404,
+                )
+            stream_source = await _get_stream_source(hass, entity_id)
+
+        if not stream_source:
+            return web.json_response(
+                {"error": f"No stream source available for '{entity_id}'"}, status=503,
+            )
+
+        hw_accel = await _detect_hw_accel()
+        jpeg = await _grab_single_frame(stream_source, hw_accel)
+        if jpeg is None:
+            return web.json_response(
+                {"error": "Failed to grab frame"}, status=504,
+            )
+
+        # Store in cache so subsequent requests for this camera hit the fast path
+        _latest_frame[entity_id] = (jpeg, time.monotonic())
+        _LOGGER.debug(
+            "Snapshot [%s]: cache miss — ffmpeg produced %d bytes",
+            entity_id, len(jpeg),
+        )
+        return web.Response(
+            body=jpeg,
+            headers={
+                "Content-Type": "image/jpeg",
+                "Cache-Control": "no-cache",
+                "X-Dashie-Snapshot-Source": "ffmpeg",
+            },
+        )
+
+
 def register_stream_proxy_views(hass: HomeAssistant) -> None:
     """Register MJPEG stream proxy HTTP views."""
     hass.http.register_view(DashieMjpegStreamView())
-    _LOGGER.info("Registered Dashie MJPEG stream proxy view")
+    hass.http.register_view(DashieSnapshotView())
+    _LOGGER.info("Registered Dashie MJPEG stream proxy + snapshot views")
