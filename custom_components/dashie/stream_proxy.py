@@ -566,6 +566,42 @@ async def _pipe_frames_to_response(
     client_gone = False
 
     try:
+        # Peek the first frame out as soon as it arrives — gives the client
+        # a visible snapshot ~1s earlier than waiting for the full prefill.
+        # This is the "thumbnail" for cards mounting off a cold start: the
+        # first JPEG ffmpeg produces is a current keyframe, sent ahead of
+        # the steady-cadence stream loop. Afterwards the prefill still
+        # runs normally so the smoothed stream has its jitter buffer.
+        peek_start = time.monotonic()
+        while len(frame_buf) == 0 and not ffmpeg_done.is_set():
+            await asyncio.sleep(0.01)
+        if frame_buf:
+            # DO NOT popleft — leave the frame in the buffer so the main
+            # send loop will deliver it again on its cadence. This intentional
+            # duplicate keeps the perceived first-frame latency low without
+            # risking a gap before the steady stream starts.
+            peek_frame_data = frame_buf[0]
+            peek_frame = (
+                boundary
+                + b"Content-Type: image/jpeg\r\n"
+                + f"Content-Length: {len(peek_frame_data)}\r\n\r\n".encode()
+                + peek_frame_data
+                + b"\r\n"
+            )
+            try:
+                await asyncio.wait_for(
+                    _write_and_drain(response, peek_frame), timeout=5.0
+                )
+                _LOGGER.debug(
+                    "MJPEG [%s]: peek frame sent (%dB, %.0fms after ffmpeg start)",
+                    entity_id, len(peek_frame_data),
+                    (time.monotonic() - peek_start) * 1000,
+                )
+            except (asyncio.TimeoutError, ConnectionResetError, ConnectionAbortedError):
+                _LOGGER.debug("MJPEG [%s]: client gone during peek frame", entity_id)
+                client_gone = True
+                return client_gone
+
         # Pre-fill: wait for enough frames to measure input fps and absorb burst gaps
         while len(frame_buf) < PREFILL_FRAMES and not ffmpeg_done.is_set():
             await asyncio.sleep(0.01)
@@ -745,40 +781,29 @@ async def _grab_single_frame(
         "-loglevel", "error",
         "-fflags", "+nobuffer+discardcorrupt",
         "-err_detect", "ignore_err",
+        # Cold-start perf: skip ffmpeg's default 5s stream analysis + 5MB
+        # probe. For a single frame we don't need deep format detection —
+        # treat the first decoded keyframe as authoritative. Cuts ~1-2s off
+        # a cold snapshot.
+        "-analyzeduration", "0",
+        "-probesize", "32k",
     ]
-    # Match the MJPEG streamer's hardware decode options so we stay on the
-    # same codepath; for a single frame the encode is always software mjpeg.
-    if hw_accel == "vaapi" and _vaapi_device:
-        cmd.extend([
-            "-hwaccel", "vaapi",
-            "-hwaccel_device", _vaapi_device,
-            "-hwaccel_output_format", "vaapi",
-        ])
-    elif hw_accel == "cuda":
-        cmd.extend([
-            "-hwaccel", "cuda",
-            "-hwaccel_output_format", "cuda",
-        ])
-    elif hw_accel == "v4l2m2m":
-        cmd.extend(["-c:v", "h264_v4l2m2m"])
+    # For a cold-start single-frame grab, hardware decode setup has higher
+    # fixed overhead (GPU context init) than the decode itself saves. Stay
+    # on software for _grab_single_frame — it's one frame, ~50ms decode.
+    # (The continuous MJPEG streamer still uses hw_accel; only snapshots skip.)
+    # Intentionally ignoring hw_accel here.
 
     if stream_source.startswith("rtsp://"):
         cmd.extend([
             "-rtsp_transport", "tcp",
             "-timeout", "3000000",
+            # Tight read-write socket timeout so a flaky camera returns
+            # 504 to the client rather than hanging.
+            "-rw_timeout", "3000000",
         ])
 
-    # If hardware path outputs GPU surface format, download to main memory
-    # so the mjpeg encoder sees regular frames.
-    vf = None
-    if hw_accel == "vaapi" and _vaapi_device:
-        vf = "hwdownload,format=nv12"
-    elif hw_accel == "cuda":
-        vf = "hwdownload,format=nv12"
-
     cmd.extend(["-i", stream_source])
-    if vf:
-        cmd.extend(["-vf", vf])
     cmd.extend([
         "-frames:v", "1",
         "-c:v", "mjpeg",
