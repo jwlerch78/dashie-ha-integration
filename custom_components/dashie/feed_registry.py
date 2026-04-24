@@ -430,10 +430,17 @@ async def _get_frigate_camera_names() -> list[str]:
 
 
 def _annotate_frigate_camera(feed: dict, frigate_cameras: list[str]) -> None:
-    """Annotate a feed dict with Frigate camera info if it matches."""
+    """Annotate a feed dict with Frigate camera info if it matches.
+
+    When `frigate_cameras` is empty (Frigate not reachable), we PRESERVE the
+    feed's existing is_frigate_camera / frigate_camera_name so a transient
+    Frigate outage doesn't clobber previously-established Frigate annotations.
+    User-visible impact otherwise: the playback/clips icon disappears from
+    every Frigate-connected feed whenever Frigate has a brief hiccup.
+    """
     if not frigate_cameras:
-        feed["is_frigate_camera"] = False
-        feed["frigate_camera_name"] = ""
+        feed.setdefault("is_frigate_camera", False)
+        feed.setdefault("frigate_camera_name", "")
         return
 
     stream_url = feed.get("stream_source_url", "")
