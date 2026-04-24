@@ -435,13 +435,28 @@ def _annotate_frigate_camera(feed: dict, frigate_cameras: list[str]) -> None:
     When `frigate_cameras` is empty (Frigate not reachable), we PRESERVE the
     feed's existing is_frigate_camera / frigate_camera_name so a transient
     Frigate outage doesn't clobber previously-established Frigate annotations.
+    When `frigate_cameras` is non-empty and the feed claims a Frigate camera
+    name that's NOT in the current list, we reset — that stored name is
+    stale (e.g., the camera was removed from Frigate config since last sync).
     User-visible impact otherwise: the playback/clips icon disappears from
-    every Frigate-connected feed whenever Frigate has a brief hiccup.
+    every Frigate-connected feed whenever Frigate has a brief hiccup, OR
+    appears on feeds whose Frigate camera was long since removed.
     """
     if not frigate_cameras:
         feed.setdefault("is_frigate_camera", False)
         feed.setdefault("frigate_camera_name", "")
         return
+
+    # Frigate is reachable — validate any existing annotation against the
+    # current camera list. If the stored name isn't in the list, clear it
+    # so the match loop below can re-evaluate (and correctly leave it false
+    # if no match).
+    stored_name = feed.get("frigate_camera_name", "")
+    if stored_name and stored_name not in frigate_cameras:
+        _LOGGER.info("Feed '%s' had stale Frigate annotation (name=%s not in %s) — clearing",
+                     feed.get("label"), stored_name, frigate_cameras)
+        feed["is_frigate_camera"] = False
+        feed["frigate_camera_name"] = ""
 
     stream_url = feed.get("stream_source_url", "")
     source_type = feed.get("stream_source_type", "")

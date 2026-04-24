@@ -83,14 +83,33 @@ async def _proxy_json(request: web.Request, path: str, params: dict | None = Non
         return web.json_response({"error": "Frigate not available"}, status=502)
 
     session = await _get_session()
+    url = f"{base}{path}"
     try:
-        url = f"{base}{path}"
         async with session.get(url, params=params, timeout=_TIMEOUT) as resp:
-            data = await resp.json()
+            body_text = await resp.text()
+            if resp.status != 200:
+                _LOGGER.warning("Frigate returned %s for %s?%s: %s",
+                                resp.status, url, params, body_text[:200])
+                return web.Response(
+                    status=resp.status,
+                    body=body_text,
+                    content_type=resp.headers.get("Content-Type", "application/json"),
+                )
+            try:
+                data = await resp.json() if body_text and body_text[0] in ("[", "{") else None
+            except Exception:
+                data = None
+            if data is None:
+                # Not JSON — return raw text so the caller can see what came back
+                return web.Response(
+                    status=resp.status,
+                    body=body_text,
+                    content_type=resp.headers.get("Content-Type", "text/plain"),
+                )
             return web.json_response(data, status=resp.status)
     except Exception as err:
-        _LOGGER.error("Frigate proxy error (%s): %s", path, err)
-        return web.json_response({"error": str(err)}, status=502)
+        _LOGGER.error("Frigate proxy error (%s %s?%s): %s", type(err).__name__, url, params, err)
+        return web.json_response({"error": f"{type(err).__name__}: {err}"}, status=502)
 
 
 async def _proxy_stream(request: web.Request, path: str) -> web.StreamResponse:
