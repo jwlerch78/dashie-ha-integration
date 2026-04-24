@@ -73,6 +73,16 @@ class FeedRegistry:
         """Return a single feed definition."""
         return self._data["feeds"].get(feed_id)
 
+    # Fields that should NOT be silently overwritten with an empty string on
+    # an update. A client sending an incomplete payload (e.g. the JS settings
+    # auto-save firing with a partially-initialised draft) would otherwise
+    # blank out a working association. On a CREATE these fields can still be
+    # empty — only existing feeds with a non-empty stored value are protected.
+    _PROTECTED_UPDATE_FIELDS: tuple[str, ...] = (
+        "camera_entity_id",
+        "stream_source_url",
+    )
+
     async def async_create_or_update_feed(self, feed_data: dict) -> dict:
         """Create or update a feed definition."""
         feed_id = feed_data.get("id")
@@ -88,9 +98,29 @@ class FeedRegistry:
                 counter += 1
             feed_data["id"] = feed_id
 
-        # Merge with defaults for missing fields
+        # Guard against clients wiping critical fields by sending empty
+        # strings. If this is an update (existing feed) and the incoming
+        # payload has an empty value for a protected field that already has
+        # a non-empty stored value, drop it from the update so the merge
+        # preserves the existing value. Loud log so we can trace offending
+        # clients.
         existing = self._data["feeds"].get(feed_id, {})
-        merged = {**DEFAULT_FEED, **existing, **feed_data}
+        sanitized_data = dict(feed_data)
+        if existing:
+            for field in self._PROTECTED_UPDATE_FIELDS:
+                incoming = sanitized_data.get(field)
+                stored = existing.get(field)
+                if incoming == "" and stored not in (None, ""):
+                    _LOGGER.warning(
+                        "Feed %s: dropping empty '%s' from update (would have "
+                        "overwritten stored value %r). Client likely sent an "
+                        "incomplete payload; preserving existing value.",
+                        feed_id, field, stored,
+                    )
+                    sanitized_data.pop(field)
+
+        # Merge with defaults for missing fields
+        merged = {**DEFAULT_FEED, **existing, **sanitized_data}
         merged["id"] = feed_id
         merged["updated_at"] = time.time()
         if "created_at" not in merged:
@@ -174,6 +204,23 @@ class FeedRegistry:
             for trigger in feed.get("triggers", []):
                 entities.add(trigger["entity_id"])
         return entities
+
+    @callback
+    def get_feeds_tracking_entity(self, entity_id: str) -> list[dict]:
+        """Get feeds that reference this entity as a trigger, regardless of state.
+
+        Used to push state=off transitions to devices so continue-while-active
+        tracking on the client knows when to stop extending auto-dismiss.
+        Matching on state_val alone (as get_feeds_for_trigger does) excludes
+        the off transitions, which meant clients cached state=on forever.
+        """
+        matches = []
+        for feed in self._data["feeds"].values():
+            for trigger in feed.get("triggers", []):
+                if trigger["entity_id"] == entity_id:
+                    matches.append(feed)
+                    break
+        return matches
 
     @callback
     def get_feeds_for_trigger(self, entity_id: str, state: str) -> list[dict]:
@@ -329,7 +376,12 @@ def _notify_trigger_refresh(hass: HomeAssistant) -> None:
 # Cache of Frigate camera names (refreshed when None)
 _frigate_camera_cache: list[str] | None = None
 _frigate_cache_time: float = 0
+# Long TTL for successful (non-empty) camera list — cameras don't change often.
 _FRIGATE_CACHE_TTL = 300  # 5 minutes
+# Short TTL when the last probe returned empty — avoids being stuck at an empty
+# list for 5 minutes when Frigate was briefly unreachable (container restart,
+# URL stale, etc.). Previously the fix required a HA restart to clear.
+_FRIGATE_EMPTY_CACHE_TTL = 30  # 30 seconds
 
 
 async def _get_frigate_camera_names() -> list[str]:
@@ -338,11 +390,19 @@ async def _get_frigate_camera_names() -> list[str]:
     from .frigate_proxy import _detect_frigate, _get_session, _TIMEOUT
 
     now = time.time()
-    if _frigate_camera_cache is not None and (now - _frigate_cache_time) < _FRIGATE_CACHE_TTL:
-        return _frigate_camera_cache
+    if _frigate_camera_cache is not None:
+        age = now - _frigate_cache_time
+        ttl = _FRIGATE_CACHE_TTL if _frigate_camera_cache else _FRIGATE_EMPTY_CACHE_TTL
+        if age < ttl:
+            return _frigate_camera_cache
 
     base = await _detect_frigate()
     if not base:
+        _LOGGER.info("Frigate not detected — no Frigate annotations will be applied to feeds")
+        # Cache empty result briefly so we don't probe on every feed list call,
+        # but short enough to self-heal once Frigate is reachable again.
+        _frigate_camera_cache = []
+        _frigate_cache_time = now
         return []
 
     try:
@@ -350,12 +410,22 @@ async def _get_frigate_camera_names() -> list[str]:
         async with session.get(f"{base}/api/config", timeout=_TIMEOUT) as resp:
             if resp.status == 200:
                 config = await resp.json()
-                _frigate_camera_cache = list(config.get("cameras", {}).keys())
+                cameras = list(config.get("cameras", {}).keys())
+                _frigate_camera_cache = cameras
                 _frigate_cache_time = now
-                return _frigate_camera_cache
+                _LOGGER.info("Frigate cameras refreshed: %s", cameras)
+                return cameras
+            else:
+                _LOGGER.warning("Frigate /api/config returned %s (base=%s)", resp.status, base)
     except Exception as err:
-        _LOGGER.debug("Failed to fetch Frigate cameras: %s", err)
+        _LOGGER.warning("Failed to fetch Frigate cameras from %s: %s — will retry", base, err)
+        # URL might be stale (container moved). Invalidate the cached URL so
+        # the next call re-probes all candidates.
+        from . import frigate_proxy as _fp
+        _fp._frigate_url = None
 
+    _frigate_camera_cache = []
+    _frigate_cache_time = now
     return []
 
 
@@ -403,8 +473,8 @@ def _annotate_frigate_camera(feed: dict, frigate_cameras: list[str]) -> None:
 
     feed["is_frigate_camera"] = False
     feed["frigate_camera_name"] = ""
-    _LOGGER.debug("Feed '%s' did not match any Frigate camera (label=%s, entity=%s, id=%s)",
-                  feed.get("label"), label, entity_id, feed_id)
+    _LOGGER.info("Feed '%s' did not match any Frigate camera (label=%s, entity=%s, id=%s, frigate_cams=%s)",
+                 feed.get("label"), label, entity_id, feed_id, frigate_cameras)
 
 
 def register_feed_registry_views(hass: HomeAssistant) -> None:

@@ -50,7 +50,12 @@ async def _get_session() -> aiohttp.ClientSession:
 
 
 async def _detect_frigate() -> str | None:
-    """Probe for Frigate API and cache the URL."""
+    """Probe for Frigate API and cache the URL.
+
+    If a cached URL exists but no longer responds, callers should set
+    `_frigate_url = None` to force a re-probe (see feed_registry._get_frigate_camera_names
+    for the self-heal path).
+    """
     global _frigate_url
     if _frigate_url:
         return _frigate_url
@@ -67,7 +72,7 @@ async def _detect_frigate() -> str | None:
         except Exception:
             continue
 
-    _LOGGER.warning("Frigate not found at any candidate URL")
+    _LOGGER.warning("Frigate not found at any candidate URL: %s", _FRIGATE_CANDIDATES)
     return None
 
 
@@ -140,10 +145,12 @@ async def _proxy_clip_transcoded(request: web.Request, path: str) -> web.StreamR
         return await _proxy_stream(request, path)
 
     url = f"{base}{path}"
+    process: asyncio.subprocess.Process | None = None
 
     try:
         # Pipe Frigate clip through FFmpeg: scale to 720p, fast encode, stream MP4
         # -movflags frag_keyframe+empty_moov enables streaming (fragmented MP4)
+        # stderr=DEVNULL so a full stderr pipe never blocks ffmpeg
         process = await asyncio.create_subprocess_exec(
             ffmpeg_bin,
             "-i", url,
@@ -158,10 +165,10 @@ async def _proxy_clip_transcoded(request: web.Request, path: str) -> web.StreamR
             "-movflags", "frag_keyframe+empty_moov",
             "-frag_duration", "1000000",             # 1-second fragments for faster start
             "-f", "mp4",
-            "-loglevel", "warning",
+            "-loglevel", "error",
             "pipe:1",
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
 
         response = web.StreamResponse(
@@ -172,26 +179,37 @@ async def _proxy_clip_transcoded(request: web.Request, path: str) -> web.StreamR
         )
         await response.prepare(request)
 
-        # Stream FFmpeg output to the client
+        # Stream FFmpeg output to the client. Any exit path (client disconnect,
+        # write error, cancellation, normal EOF) falls through to the finally
+        # block which guarantees the subprocess is reaped.
         while True:
             chunk = await process.stdout.read(65536)
             if not chunk:
                 break
             await response.write(chunk)
 
-        await process.wait()
-
-        # Log any FFmpeg errors
-        stderr = await process.stderr.read()
-        if process.returncode != 0 and stderr:
-            _LOGGER.warning("FFmpeg transcode warning: %s", stderr.decode()[:500])
-
         await response.write_eof()
         return response
 
+    except asyncio.CancelledError:
+        # Client disconnected — let the finally block clean up, then re-raise.
+        raise
+    except (ConnectionResetError, aiohttp.ClientConnectionError):
+        # Client dropped mid-stream. Subprocess gets killed in finally.
+        return web.Response(status=499)
     except Exception as err:
         _LOGGER.error("Frigate clip transcode error (%s): %s", path, err)
         return web.json_response({"error": str(err)}, status=502)
+    finally:
+        if process is not None and process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                _LOGGER.warning("FFmpeg did not exit after kill (%s)", path)
 
 
 # ── Views ──────────────────────────────────────────────────────────
