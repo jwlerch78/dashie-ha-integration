@@ -91,7 +91,14 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Set the screensaver mode."""
         mode = self._mode_api_map.get(option, option.lower())
-        await self.coordinator.send_command(API_SET_SCREENSAVER_MODE, mode=mode)
+        success = await self.coordinator.send_command(API_SET_SCREENSAVER_MODE, mode=mode)
+        if success:
+            # Optimistic update so the UI reflects the new value immediately
+            # instead of waiting for the next coordinator poll. The next
+            # poll confirms it (and corrects if the device rejected).
+            if self.coordinator.data is not None:
+                self.coordinator.data["screensaverMode"] = mode
+                self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
 
 
