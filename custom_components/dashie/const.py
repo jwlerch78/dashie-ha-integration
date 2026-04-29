@@ -113,7 +113,7 @@ SETTING_RTSP_SOFTWARE_ENCODING = "rtspSoftwareEncoding"
 # =============================================================================
 
 # Screensaver modes
-SCREENSAVER_MODES = ["dim", "black", "url", "photos", "app"]
+SCREENSAVER_MODES = ["dim", "black", "off", "url", "photos", "weather", "ha_page", "app"]
 
 # Screen off methods
 SCREEN_OFF_METHODS = {

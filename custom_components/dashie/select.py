@@ -61,6 +61,8 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
         "off": "Screen Off",
         "url": "URL",
         "photos": "Photos",
+        "weather": "Weather & Time",
+        "ha_page": "HA Page",
         "app": "App",
     }
 
@@ -69,7 +71,10 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_screensaver_mode"
         self._attr_name = "Screensaver: Mode"
-        self._attr_options = ["Dim", "Black Overlay", "Screen Off", "URL", "Photos", "App"]
+        self._attr_options = [
+            "Dim", "Black Overlay", "Screen Off",
+            "Photos", "Weather & Time", "HA Page", "URL", "App",
+        ]
 
     @property
     def current_option(self) -> str | None:
