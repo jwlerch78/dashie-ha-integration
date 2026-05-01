@@ -172,11 +172,30 @@ class DashieMotionSensor(DashieEntity, BinarySensorEntity):
         self._attr_name = "Motion Detected"
 
     @property
+    def available(self) -> bool:
+        """Sensor is unavailable when the user has motion detection turned off
+        on the device — distinct from "active and currently nothing detected".
+        Falls back to the coordinator's update success when the device hasn't
+        reported the toggle yet (older firmware)."""
+        if not super().available:
+            return False
+        if self.coordinator.data is None:
+            return False
+        enabled = self.coordinator.data.get("motionDetectionEnabled")
+        if enabled is None:
+            return True  # device hasn't reported the toggle — assume legacy behavior
+        return bool(enabled)
+
+    @property
     def is_on(self) -> bool | None:
-        """Return true if motion is detected."""
-        if self.coordinator.data:
-            return self.coordinator.data.get("motionDetected", False)
-        return None
+        """Return true if motion is detected. None when detection is off so
+        HA renders the entity as unavailable."""
+        if not self.coordinator.data:
+            return None
+        enabled = self.coordinator.data.get("motionDetectionEnabled")
+        if enabled is False:
+            return None
+        return self.coordinator.data.get("motionDetected", False)
 
 
 class DashieFaceSensor(DashieEntity, BinarySensorEntity):
@@ -192,8 +211,25 @@ class DashieFaceSensor(DashieEntity, BinarySensorEntity):
         self._attr_name = "Face Detected"
 
     @property
+    def available(self) -> bool:
+        """Sensor is unavailable when the user has face detection turned off
+        on the device — distinct from "active and currently nothing detected"."""
+        if not super().available:
+            return False
+        if self.coordinator.data is None:
+            return False
+        enabled = self.coordinator.data.get("faceDetectionEnabled")
+        if enabled is None:
+            return True
+        return bool(enabled)
+
+    @property
     def is_on(self) -> bool | None:
-        """Return true if a face is detected."""
-        if self.coordinator.data:
-            return self.coordinator.data.get("faceDetected", False)
-        return None
+        """Return true if a face is detected. None when detection is off so
+        HA renders the entity as unavailable."""
+        if not self.coordinator.data:
+            return None
+        enabled = self.coordinator.data.get("faceDetectionEnabled")
+        if enabled is False:
+            return None
+        return self.coordinator.data.get("faceDetected", False)

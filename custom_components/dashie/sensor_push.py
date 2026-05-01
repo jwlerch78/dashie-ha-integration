@@ -16,8 +16,13 @@ from .coordinator import DashieCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# Fields that devices are allowed to push
-_PUSHABLE_FIELDS = {"motionDetected", "faceDetected"}
+# Fields that devices are allowed to push.
+# *Enabled flags reflect the user's detection toggle on the device — when
+# false, the binary_sensor entity renders as unavailable instead of "off".
+_PUSHABLE_FIELDS = {
+    "motionDetected", "faceDetected",
+    "motionDetectionEnabled", "faceDetectionEnabled",
+}
 
 
 class DashieSensorPushView(HomeAssistantView):
