@@ -39,6 +39,11 @@ DEFAULT_FEED = {
     "continue_while_active": True,
     "alert_sound": "notify_bright_ping",
     "default_mode": DEFAULT_MODE,
+    # Frigate camera override:
+    #   ""          → auto-detect via _annotate_frigate_camera matcher
+    #   "<name>"    → force this Frigate camera, skip matcher
+    #   "__none__"  → explicit opt-out; never treat as Frigate
+    "frigate_camera_override": "",
 }
 
 
@@ -446,6 +451,22 @@ def _annotate_frigate_camera(feed: dict, frigate_cameras: list[str]) -> None:
         feed.setdefault("is_frigate_camera", False)
         feed.setdefault("frigate_camera_name", "")
         return
+
+    # User override takes precedence over auto-detection.
+    override = feed.get("frigate_camera_override", "")
+    if override == "__none__":
+        feed["is_frigate_camera"] = False
+        feed["frigate_camera_name"] = ""
+        return
+    if override and override in frigate_cameras:
+        feed["is_frigate_camera"] = True
+        feed["frigate_camera_name"] = override
+        return
+    if override and override not in frigate_cameras:
+        # Override points at a camera that no longer exists in Frigate config.
+        # Fall through to auto-match instead of leaving the feed broken.
+        _LOGGER.info("Feed '%s' override=%s no longer in Frigate cameras %s — falling back to auto-match",
+                     feed.get("label"), override, frigate_cameras)
 
     # Frigate is reachable — validate any existing annotation against the
     # current camera list. If the stored name isn't in the list, clear it
