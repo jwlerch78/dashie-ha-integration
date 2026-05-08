@@ -25,8 +25,13 @@ _LOGGER = logging.getLogger(__name__)
 TO_REDACT = {CONF_PASSWORD, "password"}
 
 
-async def _fetch_device_log(coordinator) -> str:
-    """Pull the on-device diagnostics log via the local HTTP API."""
+async def _fetch_device_log(coordinator) -> list[str]:
+    """Pull the on-device diagnostics log via the local HTTP API.
+
+    Returns the log as a list of lines so the JSON serializer emits a real
+    line-per-entry array rather than a single 2 MB string with escaped \\n —
+    most editors silently truncate long lines and hide the rest.
+    """
     try:
         session = await coordinator._get_session()
         params = {"cmd": "getDiagnosticsLog"}
@@ -36,14 +41,15 @@ async def _fetch_device_log(coordinator) -> str:
         async with asyncio.timeout(15):
             async with session.get(url, params=params) as response:
                 response.raise_for_status()
-                return await response.text()
+                text = await response.text()
+                return text.splitlines()
     except asyncio.TimeoutError:
-        return "(timeout fetching diagnostics from device)"
+        return ["(timeout fetching diagnostics from device)"]
     except aiohttp.ClientError as err:
-        return f"(connection error fetching diagnostics: {err})"
+        return [f"(connection error fetching diagnostics: {err})"]
     except Exception as err:  # pragma: no cover - defensive
         _LOGGER.exception("Failed to fetch diagnostics from device")
-        return f"(error fetching diagnostics: {err})"
+        return [f"(error fetching diagnostics: {err})"]
 
 
 async def async_get_config_entry_diagnostics(
