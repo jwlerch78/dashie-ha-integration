@@ -520,6 +520,48 @@ def _annotate_frigate_camera(feed: dict, frigate_cameras: list[str]) -> None:
                  feed.get("label"), label, entity_id, feed_id, frigate_cameras)
 
 
+async def get_frigate_camera_for_entity(
+    hass: HomeAssistant, entity_id: str
+) -> str | None:
+    """Return the Frigate camera name a given camera entity is mapped to.
+
+    Used by the stream resolve + MJPEG proxy paths to decide whether a
+    feed's LIVE stream should be routed through Frigate (more resilient)
+    instead of through the underlying HA camera entity (which can go
+    ``unavailable`` when an upstream integration like ``tapo_control``
+    breaks).
+
+    Returns the matched Frigate camera name (e.g. ``"pool"``) or ``None``
+    if there is no matching feed, no Frigate match, Frigate is not
+    reachable, or the user explicitly opted out for that feed via
+    ``frigate_camera_override == "__none__"``.
+
+    The matching reuses :func:`_annotate_frigate_camera` so behavior is
+    identical to what the feed-list view advertises — including override
+    semantics. Annotation writes are intentionally in-memory only; the
+    registry is not persisted from this read path.
+    """
+    registry: FeedRegistry | None = hass.data.get("dashie", {}).get("feed_registry")
+    if registry is None or registry._data is None:
+        return None
+
+    frigate_cameras = await _get_frigate_camera_names()
+    if not frigate_cameras:
+        # Frigate not reachable — no Frigate routing possible right now.
+        return None
+
+    for feed in registry._data["feeds"].values():
+        if feed.get("camera_entity_id") != entity_id:
+            continue
+        # Re-evaluate annotation with the current camera list so we
+        # honour overrides set since the last DashieFeedsListView GET.
+        _annotate_frigate_camera(feed, frigate_cameras)
+        if feed.get("is_frigate_camera") and feed.get("frigate_camera_name"):
+            return feed["frigate_camera_name"]
+
+    return None
+
+
 def register_feed_registry_views(hass: HomeAssistant) -> None:
     """Register feed registry HTTP views."""
     hass.http.register_view(DashieFeedsListView())

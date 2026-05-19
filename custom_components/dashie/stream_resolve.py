@@ -26,6 +26,8 @@ from homeassistant.core import HomeAssistant
 
 from .stream_proxy import _get_stream_source, _redact_url
 from .go2rtc_manager import Go2RtcManager
+from .feed_registry import get_frigate_camera_for_entity
+from .frigate_stream import build_frigate_rtsp_url, is_frigate_rtsp_reachable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -294,6 +296,44 @@ class DashieStreamResolveView(HomeAssistantView):
         # Only "unavailable" (offline/disconnected) and "off" (explicitly disabled)
         # mean the camera can't stream.
         available = state.state not in ("unavailable", "off")
+
+        # Phase A: Frigate-routed live stream.
+        #
+        # If this entity is mapped to a Frigate camera in the feed registry,
+        # prefer Frigate's restream over the HA camera entity. Frigate connects
+        # to cameras directly via RTSP and survives upstream HA-integration
+        # failures (e.g. tapo_control going "Not loaded" after an HA core
+        # update). When Frigate routes successfully, the feed reports
+        # ``available: true`` even if the underlying entity is ``unavailable``
+        # — which is the whole point of this path.
+        #
+        # Opt-out: a feed with ``frigate_camera_override == "__none__"`` is
+        # excluded by ``get_frigate_camera_for_entity`` and falls through to
+        # the legacy entity path below.
+        frigate_camera = await get_frigate_camera_for_entity(hass, entity_id)
+        if frigate_camera:
+            ha_host = request.host.split(":")[0]
+            frigate_rtsp = build_frigate_rtsp_url(ha_host, frigate_camera)
+            if await is_frigate_rtsp_reachable(frigate_rtsp):
+                _LOGGER.info(
+                    "Resolved %s via Frigate camera %s → %s",
+                    entity_id, frigate_camera, frigate_rtsp,
+                )
+                return web.json_response({
+                    "rtsp_url": frigate_rtsp,
+                    "available": True,
+                    "via": "frigate",
+                    "frigate_camera": frigate_camera,
+                })
+            # Frigate matched but the restream port is unreachable
+            # (Frigate down, or 8554 not exposed on the HA host).
+            # Falls through to the legacy entity path so behavior on
+            # entry to Phase A is no worse than before.
+            _LOGGER.debug(
+                "Entity %s matched Frigate camera %s but %s is unreachable "
+                "— falling back to entity path",
+                entity_id, frigate_camera, frigate_rtsp,
+            )
 
         # Get the raw RTSP source URL from HA
         raw_rtsp = await _get_stream_source(hass, entity_id)

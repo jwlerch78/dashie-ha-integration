@@ -96,6 +96,55 @@ class DashieMjpegStreamView(HomeAssistantView):
         width = request.query.get("width")
         direct_source = request.query.get("source")  # Optional direct RTSP URL
 
+        # Phase A: Frigate-routed MJPEG.
+        #
+        # If this entity is mapped to a Frigate camera in the feed registry
+        # (and the caller didn't pin a direct RTSP source), serve Frigate's
+        # native MJPEG endpoint instead of resolving the HA camera entity
+        # and running ffmpeg. Two big wins:
+        #   - Frigate is already decoding the camera, so it can emit
+        #     JPEGs directly — no ffmpeg subprocess per viewer.
+        #   - Bypasses the entity path entirely, so the feed keeps
+        #     serving even when an upstream HA integration (tapo_control
+        #     etc.) has marked the entity ``unavailable``.
+        #
+        # We check Frigate's reachability BEFORE preparing the response
+        # so a Frigate-unreachable case can fall back to the entity path
+        # cleanly — once ``prepare()`` fires we've committed to a 200 OK
+        # multipart body and can't switch sources.
+        if not direct_source:
+            from .feed_registry import get_frigate_camera_for_entity
+            from .frigate_stream import stream_frigate_mjpeg
+            from .frigate_proxy import _detect_frigate as _fp_detect
+
+            frigate_camera = await get_frigate_camera_for_entity(hass, entity_id)
+            if frigate_camera and await _fp_detect():
+                _LOGGER.info(
+                    "Serving MJPEG for %s via Frigate camera %s",
+                    entity_id, frigate_camera,
+                )
+                response = web.StreamResponse(
+                    headers={
+                        "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+                        "Cache-Control": "no-cache, no-store",
+                        "Connection": "keep-alive",
+                    }
+                )
+                await response.prepare(request)
+                width_int: int | None
+                try:
+                    width_int = int(width) if width else None
+                except ValueError:
+                    width_int = None
+                await stream_frigate_mjpeg(response, frigate_camera, fps, width_int)
+                return response
+            if frigate_camera:
+                _LOGGER.debug(
+                    "MJPEG %s matched Frigate camera %s but Frigate not "
+                    "detected — falling back to entity path",
+                    entity_id, frigate_camera,
+                )
+
         if direct_source:
             # Direct RTSP URL provided — skip entity resolution
             stream_source = direct_source
