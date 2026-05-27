@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.event import async_track_time_interval
@@ -143,6 +144,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    # Migrate from legacy ANDROID_ID-based deviceID to hardware-backed stableDeviceID
+    # if the device now reports one. Must run before platform setup so entities are
+    # created with the new unique_id and inherit existing entity_ids from the registry.
+    if coordinator.last_update_success and coordinator.data:
+        await _async_migrate_device_id_if_needed(hass, entry, coordinator)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Register services (only once)
@@ -261,6 +268,87 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
     return True
+
+
+async def _async_migrate_device_id_if_needed(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: DashieCoordinator
+) -> None:
+    """Migrate config entry + entities from legacy deviceID to stableDeviceID.
+
+    The Android app added a hardware-backed `stableDeviceID` (Widevine MediaDrm)
+    that survives reinstall and package-id changes — unlike ANDROID_ID which is
+    package-scoped since API 26. Existing HA setups have entities keyed to the
+    legacy device_id. This rewrites entity unique_ids in the registry, updates
+    device registry identifiers, the feed registry subscription, and the config
+    entry — without touching entity_ids, so user dashboards/automations keep
+    working.
+
+    Idempotent: a second call is a no-op once migrated.
+    """
+    stable_id = coordinator.data.get("stableDeviceID")
+    if not stable_id:
+        return  # Old APK without stableDeviceID — nothing to migrate.
+
+    current_id = entry.data.get(CONF_DEVICE_ID)
+    if not current_id or current_id == stable_id:
+        return  # Already migrated or no prior ID.
+
+    # Bail out if another config entry already claims the stable ID — migrating
+    # would cause a unique_id collision. Surface a warning so the user can
+    # manually delete the duplicate.
+    for other in hass.config_entries.async_entries(DOMAIN):
+        if other.entry_id == entry.entry_id:
+            continue
+        if other.unique_id == stable_id or other.data.get(CONF_DEVICE_ID) == stable_id:
+            _LOGGER.warning(
+                "Cannot migrate device ID for %s (%s → %s): another config "
+                "entry %s already uses the stable ID. Delete one of the "
+                "duplicate entries manually.",
+                entry.title, current_id, stable_id, other.entry_id,
+            )
+            return
+
+    _LOGGER.info(
+        "Migrating device ID for %s: %s → %s (hardware-backed)",
+        entry.title, current_id, stable_id,
+    )
+
+    prefix_old = f"{current_id}_"
+    prefix_new = f"{stable_id}_"
+
+    # 1. Rewrite entity unique_ids. entity_ids are preserved by HA.
+    entity_registry = er.async_get(hass)
+    for ent in list(er.async_entries_for_config_entry(entity_registry, entry.entry_id)):
+        if ent.unique_id.startswith(prefix_old):
+            new_uid = prefix_new + ent.unique_id[len(prefix_old):]
+            entity_registry.async_update_entity(ent.entity_id, new_unique_id=new_uid)
+
+    # 2. Update device registry identifier so DeviceInfo continues to match.
+    device_registry = dr.async_get(hass)
+    device = device_registry.async_get_device(identifiers={(DOMAIN, current_id)})
+    if device:
+        device_registry.async_update_device(
+            device.id,
+            new_identifiers={(DOMAIN, stable_id)},
+        )
+
+    # 3. Migrate feed registry subscription, if any.
+    registry = hass.data.get(DOMAIN, {}).get("feed_registry")
+    if registry:
+        await registry.async_migrate_subscription(current_id, stable_id)
+
+    # 4. Update coordinator's in-memory device_id (used for feed trigger pushes).
+    coordinator.device_id = stable_id
+
+    # 5. Update config entry last — once this lands, future setups skip migration.
+    new_data = {**entry.data, CONF_DEVICE_ID: stable_id}
+    hass.config_entries.async_update_entry(
+        entry,
+        unique_id=stable_id,
+        data=new_data,
+    )
+
+    _LOGGER.info("Device ID migration complete for %s", entry.title)
 
 
 async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:

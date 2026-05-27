@@ -77,7 +77,12 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             _LOGGER.debug("🌐 Fetching device info from %s:%s", self._host, self._port)
             self._device_info = await self._fetch_device_info()
-            device_id = self._device_info.get("deviceID")
+            # Prefer the hardware-backed stable ID (Widevine MediaDrm); fall back
+            # to legacy deviceID for old APKs that don't expose stableDeviceID yet.
+            device_id = (
+                self._device_info.get("stableDeviceID")
+                or self._device_info.get("deviceID")
+            )
             _LOGGER.debug("📱 Received deviceID: %s", device_id)
 
             if device_id:
@@ -118,7 +123,10 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             try:
                 self._device_info = await self._fetch_device_info()
-                device_id = self._device_info.get("deviceID")
+                device_id = (
+                    self._device_info.get("stableDeviceID")
+                    or self._device_info.get("deviceID")
+                )
 
                 if device_id:
                     await self.async_set_unique_id(device_id)
@@ -177,7 +185,10 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_HOST: self._host,
                     CONF_PORT: self._port,
                     CONF_PASSWORD: password,
-                    CONF_DEVICE_ID: self._device_info.get("deviceID"),
+                    CONF_DEVICE_ID: (
+                        self._device_info.get("stableDeviceID")
+                        or self._device_info.get("deviceID")
+                    ),
                     CONF_DEVICE_NAME: display_name,
                 },
             )
@@ -208,7 +219,10 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             try:
                 self._device_info = await self._fetch_device_info()
-                device_id = self._device_info.get("deviceID")
+                device_id = (
+                    self._device_info.get("stableDeviceID")
+                    or self._device_info.get("deviceID")
+                )
 
                 if device_id:
                     await self.async_set_unique_id(device_id)

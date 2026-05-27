@@ -199,6 +199,32 @@ class FeedRegistry:
         _LOGGER.info("Subscription removed for deleted device %s", device_id)
         return True
 
+    async def async_migrate_subscription(
+        self, old_device_id: str, new_device_id: str
+    ) -> bool:
+        """Re-key a subscription from one device_id to another.
+
+        Used by config entry migration when a device transitions from a legacy
+        package-scoped ID (ANDROID_ID) to a hardware-backed stable ID. Returns
+        True if a subscription was actually re-keyed.
+        """
+        if old_device_id not in self._data["subscriptions"]:
+            return False
+        if new_device_id in self._data["subscriptions"]:
+            _LOGGER.warning(
+                "Cannot migrate subscription %s → %s: target already exists",
+                old_device_id, new_device_id,
+            )
+            return False
+        sub = self._data["subscriptions"].pop(old_device_id)
+        sub["device_id"] = new_device_id
+        self._data["subscriptions"][new_device_id] = sub
+        await self._async_save()
+        _LOGGER.info(
+            "Migrated feed subscription %s → %s", old_device_id, new_device_id
+        )
+        return True
+
     # ── Trigger Helpers ──────────────────────────────────────────
 
     @callback
