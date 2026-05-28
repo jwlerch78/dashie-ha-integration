@@ -36,7 +36,6 @@ A Home Assistant custom integration for [Dashie](https://www.dashieapp.com), pro
 Once installed, Dashie devices on your network will be automatically discovered. You'll see a notification in Home Assistant to configure the device.
 
 **Requirements:**
-- Dashie v2.3 or later
 - Device must be on the same network as Home Assistant
 - API must be enabled in Dashie settings
 
