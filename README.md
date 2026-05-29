@@ -39,9 +39,9 @@ Once installed, Dashie devices on your network will be automatically discovered.
 - Device must be on the same network as Home Assistant
 - API must be enabled in Dashie settings
 
-### SSDP Discovery Not Working?
+### Discovery Not Working?
 
-If devices aren't being discovered automatically, see the [SSDP Troubleshooting Guide](docs/SSDP_TROUBLESHOOTING.md).
+If devices aren't being discovered automatically, see the [Discovery Troubleshooting Guide](docs/DISCOVERY_TROUBLESHOOTING.md).
 
 You can also manually add devices via **Settings > Devices & Services > Add Integration > Dashie**.
 
