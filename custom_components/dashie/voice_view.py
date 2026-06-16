@@ -1,0 +1,95 @@
+"""Dashie voice gateway — routes a transcript to the voice-conversation brain.
+
+An anonymous kiosk tablet (and later generic HA voice satellites) can't call the
+cloud brain directly — it has no account credential. This view, authed by the HA
+token the device already holds, gets the account credential from the add-on and
+calls the brain on the account's behalf, returning the turn. The device then
+speaks the result and dispatches any HA action natively.
+
+This is the runtime gateway for WS3 (build plan §3.2). Reachable on-LAN and via
+remote HA URLs because it rides HA's own :8123 API surface.
+
+HTTP endpoint:
+  POST /api/dashie/voice/converse
+    { text, endpoint_id?, conversation_id?, history?, provided_context?, options? }
+  → the brain's turn { type, voice, text, action, usage, stages, ... }
+
+Deferred (later slices): /voice/session token bundle, STT-token minting, and
+TTS in the gateway (v1 returns text; the tablet speaks it natively).
+"""
+from __future__ import annotations
+
+import logging
+
+from aiohttp import web
+
+from homeassistant.components.http import HomeAssistantView
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+from .addon_bridge import AddonUnavailable, get_account_credential
+
+_LOGGER = logging.getLogger(__name__)
+
+# The voice-conversation brain edge function.
+# TODO(config): derive per-environment (staging vs prod) instead of hardcoding.
+BRAIN_URL = "https://cwglbtosingboqepsmjk.supabase.co/functions/v1/voice-conversation"
+
+
+class DashieVoiceConverseView(HomeAssistantView):
+    """Authed by the HA token; calls the brain on the account's behalf."""
+
+    url = "/api/dashie/voice/converse"
+    name = "api:dashie:voice:converse"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+
+        text = (body or {}).get("text")
+        if not text or not isinstance(text, str):
+            return web.json_response({"ok": False, "error": "text_required"}, status=400)
+
+        # TODO(WS7): gate on the household-sharing toggle (default on for dev).
+
+        try:
+            cred = await get_account_credential(hass)  # account JWT, from the add-on
+        except AddonUnavailable as err:
+            return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
+
+        payload = {
+            "text": text,
+            "endpoint_id": body.get("endpoint_id") or "ha-voice",
+            "options": body.get("options") or {},
+        }
+        for key in ("history", "provided_context", "conversation_id"):
+            if body.get(key) is not None:
+                payload[key] = body[key]
+
+        session = async_get_clientsession(hass)
+        try:
+            async with session.post(
+                BRAIN_URL,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {cred}",
+                    "apikey": cred,
+                },
+            ) as resp:
+                turn = await resp.json(content_type=None)
+                return web.json_response(turn, status=200 if resp.status < 400 else resp.status)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("voice converse → brain failed: %s", err)
+            return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502)
+
+
+def register_voice_views(hass: HomeAssistant) -> None:
+    """Register Dashie voice gateway HTTP views."""
+    hass.http.register_view(DashieVoiceConverseView())
+    _LOGGER.info("Registered Dashie voice gateway views")

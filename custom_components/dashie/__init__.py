@@ -37,6 +37,7 @@ from .hidden_speakers_store import HiddenSpeakersStore, register_hidden_speakers
 from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .device_name_views import register_device_name_views
+from .voice_view import register_voice_views
 from .stream_proxy import register_stream_proxy_views
 from .stream_resolve import register_stream_resolve_views, set_go2rtc_manager
 from .go2rtc_manager import Go2RtcManager
@@ -249,6 +250,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_sensor_push_views(hass)
         _sensor_push_registered = True
         _LOGGER.info("Registered Dashie sensor push endpoint")
+
+    if not getattr(register_voice_views, '_registered', False):
+        register_voice_views(hass)
+        register_voice_views._registered = True
+        _LOGGER.info("Registered Dashie voice gateway views")
 
     if not _device_name_registered:
         register_device_name_views(hass)
