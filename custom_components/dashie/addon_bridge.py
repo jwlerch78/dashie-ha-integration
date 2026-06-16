@@ -30,6 +30,7 @@ SUPERVISOR_URL = "http://supervisor"
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 ADDON_PORT = 8099
 _CREDENTIAL_PATH = "/api/internal/account-credential"
+_SHARING_STATUS_PATH = "/api/internal/sharing-status"
 
 # Fallback addresses if Supervisor discovery is unavailable.
 # TODO(config): also allow a config_flow override.
@@ -47,6 +48,27 @@ _working_base: str | None = None
 
 class AddonUnavailable(Exception):
     """The Dashie add-on / account credential isn't reachable."""
+
+
+class SharingDisabled(AddonUnavailable):
+    """Add-on reachable + signed in, but household Dashie Cloud sharing is off.
+
+    Subclasses AddonUnavailable so existing handlers still catch it, while
+    callers that care can distinguish "off by choice" from "unreachable".
+    """
+
+
+async def _resolve_bases(session) -> list[str]:
+    """Candidate add-on base URLs: the cached working one, else Supervisor
+    discovery + the fallback hostnames."""
+    if _working_base:
+        return [_working_base]
+    bases: list[str] = []
+    discovered = await _discover_via_supervisor(session)
+    if discovered:
+        bases.append(discovered)
+    bases.extend(_ADDON_CANDIDATES)
+    return bases
 
 
 async def _discover_via_supervisor(session) -> str | None:
@@ -90,27 +112,26 @@ async def get_account_credential(hass: HomeAssistant) -> str:
         return _cache["jwt"]
 
     session = async_get_clientsession(hass)
-
-    if _working_base:
-        bases = [_working_base]
-    else:
-        bases = []
-        discovered = await _discover_via_supervisor(session)
-        if discovered:
-            bases.append(discovered)
-        bases.extend(_ADDON_CANDIDATES)
+    bases = await _resolve_bases(session)
 
     last_err = "no candidates"
     for base in bases:
         url = f"{base}{_CREDENTIAL_PATH}"
         try:
             async with session.get(url, timeout=_TIMEOUT) as resp:
-                if resp.status != 200:
-                    last_err = f"{base}: HTTP {resp.status}"
-                    continue
-                data = await resp.json(content_type=None)
+                status = resp.status
+                data = await resp.json(content_type=None) if status == 200 else None
         except Exception as err:  # noqa: BLE001
             last_err = f"{base}: {err}"
+            continue
+
+        # 403 = add-on reachable + signed in but sharing is off. Definitive —
+        # raise outside the try so it isn't swallowed, and don't try other bases.
+        if status == 403:
+            _working_base = base
+            raise SharingDisabled("household sharing disabled")
+        if status != 200:
+            last_err = f"{base}: HTTP {status}"
             continue
 
         jwt = (data or {}).get("jwt")
@@ -126,6 +147,29 @@ async def get_account_credential(hass: HomeAssistant) -> str:
 
     _working_base = None
     raise AddonUnavailable(last_err)
+
+
+async def get_sharing_status(hass: HomeAssistant) -> dict:
+    """Probe the add-on's sharing-status endpoint (capability check, no credential).
+
+    Returns the add-on's `{available, signed_in, household_sharing, reason}` dict,
+    or a synthesized `{available: False, reason: "addon_unreachable"}` when the
+    add-on can't be reached. Never raises.
+    """
+    global _working_base
+    session = async_get_clientsession(hass)
+    bases = await _resolve_bases(session)
+    for base in bases:
+        try:
+            async with session.get(f"{base}{_SHARING_STATUS_PATH}", timeout=_TIMEOUT) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json(content_type=None)
+        except Exception:  # noqa: BLE001
+            continue
+        _working_base = base
+        return data or {"available": False, "reason": "bad_response"}
+    return {"available": False, "reason": "addon_unreachable"}
 
 
 def _parse_expiry(iso: str | None, now: float) -> float:

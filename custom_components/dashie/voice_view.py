@@ -27,7 +27,12 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .addon_bridge import AddonUnavailable, get_account_credential
+from .addon_bridge import (
+    AddonUnavailable,
+    SharingDisabled,
+    get_account_credential,
+    get_sharing_status,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,10 +60,12 @@ class DashieVoiceConverseView(HomeAssistantView):
         if not text or not isinstance(text, str):
             return web.json_response({"ok": False, "error": "text_required"}, status=400)
 
-        # TODO(WS7): gate on the household-sharing toggle (default on for dev).
-
+        # Gated on the add-on's household-sharing opt-in: get_account_credential
+        # raises SharingDisabled (403) when the account holder hasn't enabled it.
         try:
             cred = await get_account_credential(hass)  # account JWT, from the add-on
+        except SharingDisabled:
+            return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403)
         except AddonUnavailable as err:
             return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
 
@@ -89,7 +96,29 @@ class DashieVoiceConverseView(HomeAssistantView):
             return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502)
 
 
+class DashieVoiceStatusView(HomeAssistantView):
+    """Capability probe — can this HA offer Dashie Cloud voice to anonymous endpoints?
+
+    Authed by the HA token. Returns `{available, reason}` so an anonymous kiosk
+    tablet can decide whether to surface "Dashie Cloud" (the right-hand side of
+    the §16.5 OR). No credential is ever returned.
+    """
+
+    url = "/api/dashie/voice/status"
+    name = "api:dashie:voice:status"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        status = await get_sharing_status(hass)
+        return web.json_response({
+            "available": bool(status.get("available")),
+            "reason": status.get("reason", "unknown"),
+        })
+
+
 def register_voice_views(hass: HomeAssistant) -> None:
     """Register Dashie voice gateway HTTP views."""
     hass.http.register_view(DashieVoiceConverseView())
+    hass.http.register_view(DashieVoiceStatusView())
     _LOGGER.info("Registered Dashie voice gateway views")
