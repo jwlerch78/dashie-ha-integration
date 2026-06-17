@@ -32,6 +32,7 @@ from .feed_registry import FeedRegistry, register_feed_registry_views
 from .media_api import register_media_api_views
 from .music_token_store import MusicTokenStore, register_music_token_views
 from .immich_token_store import ImmichTokenStore, register_immich_token_views
+from .voice_license_store import VoiceLicenseStore, register_voice_license_views
 from .music_relay import register_music_relay_views
 from .hidden_speakers_store import HiddenSpeakersStore, register_hidden_speakers_views
 from .sensor_push import register_sensor_push_views
@@ -87,6 +88,7 @@ _feed_registry_registered = False
 _multiplexer_registered = False
 _music_token_registered = False
 _immich_token_registered = False
+_voice_license_registered = False
 _music_relay_registered = False
 _sensor_push_registered = False
 _device_name_registered = False
@@ -104,7 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dashie from a config entry."""
     global _media_api_registered, _stream_proxy_registered, _stream_resolve_registered
     global _feed_registry_registered, _multiplexer_registered, _sensor_push_registered
-    global _music_token_registered, _immich_token_registered
+    global _music_token_registered, _immich_token_registered, _voice_license_registered
     global _music_relay_registered, _device_name_registered
     global _frigate_proxy_registered
 
@@ -223,6 +225,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_immich_token_views(hass)
         _immich_token_registered = True
         _LOGGER.info("Registered Dashie Immich token views")
+
+    # Initialize voice license store (only once) — household license sharing
+    if "voice_license_store" not in hass.data[DOMAIN]:
+        voice_license_store = VoiceLicenseStore(hass)
+        await voice_license_store.async_load()
+        hass.data[DOMAIN]["voice_license_store"] = voice_license_store
+        _LOGGER.info("Initialized Dashie voice license store")
+
+    if not _voice_license_registered:
+        register_voice_license_views(hass)
+        _voice_license_registered = True
+        _LOGGER.info("Registered Dashie voice license views")
 
     # Initialize hidden speakers store (only once)
     if "hidden_speakers_store" not in hass.data[DOMAIN]:
