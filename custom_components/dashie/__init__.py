@@ -39,6 +39,7 @@ from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .device_name_views import register_device_name_views
 from .voice_view import register_voice_views
+from .transcript_store import TranscriptStore, register_transcript_views
 from .stream_proxy import register_stream_proxy_views
 from .stream_resolve import register_stream_resolve_views, set_go2rtc_manager
 from .go2rtc_manager import Go2RtcManager
@@ -269,6 +270,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_voice_views(hass)
         register_voice_views._registered = True
         _LOGGER.info("Registered Dashie voice gateway views")
+
+    # Initialize HA-local voice transcript store (only once) — §17 retention
+    if "transcript_store" not in hass.data[DOMAIN]:
+        transcript_store = TranscriptStore(hass)
+        await transcript_store.async_load()
+        hass.data[DOMAIN]["transcript_store"] = transcript_store
+        _LOGGER.info("Initialized Dashie voice transcript store")
+
+    if not getattr(register_transcript_views, '_registered', False):
+        register_transcript_views(hass)
+        register_transcript_views._registered = True
+        _LOGGER.info("Registered Dashie voice transcript views")
 
     if not _device_name_registered:
         register_device_name_views(hass)

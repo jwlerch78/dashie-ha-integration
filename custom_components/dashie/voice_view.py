@@ -69,10 +69,16 @@ class DashieVoiceConverseView(HomeAssistantView):
         except AddonUnavailable as err:
             return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
 
+        endpoint_id = body.get("endpoint_id") or "ha-voice"
+        # Caller-mode retention (§17): the brain must NEVER persist transcript text
+        # to Supabase for kiosk turns — it only signals metadata.retain_transcript,
+        # and we keep the transcript HA-locally below.
+        options = dict(body.get("options") or {})
+        options["retain_mode"] = "caller"
         payload = {
             "text": text,
-            "endpoint_id": body.get("endpoint_id") or "ha-voice",
-            "options": body.get("options") or {},
+            "endpoint_id": endpoint_id,
+            "options": options,
         }
         for key in ("history", "provided_context", "conversation_id"):
             if body.get(key) is not None:
@@ -90,10 +96,28 @@ class DashieVoiceConverseView(HomeAssistantView):
                 },
             ) as resp:
                 turn = await resp.json(content_type=None)
-                return web.json_response(turn, status=200 if resp.status < 400 else resp.status)
+                status = 200 if resp.status < 400 else resp.status
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("voice converse → brain failed: %s", err)
             return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502)
+
+        # Store the transcript HA-locally only when the account opted in (the brain
+        # tells us via metadata.retain_transcript). Never blocks/breaks the turn.
+        try:
+            meta = turn.get("metadata") if isinstance(turn, dict) else None
+            if meta and meta.get("retain_transcript"):
+                store = hass.data.get("dashie", {}).get("transcript_store")
+                if store is not None:
+                    await store.async_append(
+                        text=text,
+                        voice=turn.get("voice") or "",
+                        endpoint_id=endpoint_id,
+                        session_id=turn.get("conversation_id") or payload.get("conversation_id"),
+                    )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("transcript retention skipped: %s", err)
+
+        return web.json_response(turn, status=status)
 
 
 class DashieVoiceStatusView(HomeAssistantView):
