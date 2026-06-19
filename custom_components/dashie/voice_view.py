@@ -111,6 +111,7 @@ class DashieVoiceConverseView(HomeAssistantView):
                     await store.async_append(
                         text=text,
                         voice=turn.get("voice") or "",
+                        subtext=turn.get("text") or None,
                         endpoint_id=endpoint_id,
                         session_id=turn.get("conversation_id") or payload.get("conversation_id"),
                     )

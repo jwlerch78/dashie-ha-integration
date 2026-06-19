@@ -51,6 +51,7 @@ class TranscriptStore:
         *,
         text: str,
         voice: str,
+        subtext: str | None,
         endpoint_id: str | None,
         session_id: str | None,
     ) -> None:
@@ -61,6 +62,7 @@ class TranscriptStore:
                 "ts": dt_util.utcnow().isoformat(),
                 "text": text,
                 "voice": voice,
+                "subtext": subtext,
                 "endpoint_id": endpoint_id,
                 "session_id": session_id,
             }
