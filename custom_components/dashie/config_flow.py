@@ -23,6 +23,35 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_host(raw_host: str) -> tuple[str, int | None]:
+    """Normalize a user-entered host into a bare host + optional embedded port.
+
+    Tolerates copy/paste mistakes that otherwise produce a broken URL and a
+    misleading "cannot connect": an ``http://``/``https://`` scheme, a trailing
+    slash or path, surrounding whitespace, and an embedded ``:port``. The bare
+    host is what gets stored and reused by the coordinator at runtime, so a
+    clean value here fixes both setup and every later poll.
+
+    Returns ``(host, port)`` where ``port`` is ``None`` if none was embedded.
+    IPv6 (multiple colons / bracketed) is left untouched.
+    """
+    host = (raw_host or "").strip()
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    for sep in ("/", "?", "#"):
+        host = host.split(sep, 1)[0]
+    host = host.strip().strip(".")
+
+    port: int | None = None
+    # Peel a single embedded port (IPv4 / hostname only; skip IPv6).
+    if host.count(":") == 1 and not host.startswith("["):
+        candidate_host, _, candidate_port = host.partition(":")
+        if candidate_port.isdigit():
+            host, port = candidate_host, int(candidate_port)
+
+    return host, port
+
+
 class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Dashie."""
 
@@ -46,7 +75,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         _LOGGER.debug("  Properties: %s", discovery_info.properties)
 
         # Extract host and port from zeroconf discovery
-        self._host = discovery_info.host
+        self._host, _ = _normalize_host(discovery_info.host or "")
         self._port = discovery_info.port or DEFAULT_PORT
 
         if not self._host:
@@ -222,8 +251,9 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._host = user_input[CONF_HOST]
-            self._port = user_input.get(CONF_PORT, DEFAULT_PORT)
+            self._host, embedded_port = _normalize_host(user_input[CONF_HOST])
+            # An embedded :port (e.g. "192.168.1.5:8080") wins over the field default.
+            self._port = embedded_port or user_input.get(CONF_PORT, DEFAULT_PORT)
             self._password = user_input.get(CONF_PASSWORD, "")
 
             try:
