@@ -9,7 +9,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_PASSWORD
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import AbortFlow, FlowResult
 
 from .const import (
     DOMAIN,
@@ -98,6 +98,9 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.context["title_placeholders"] = {"name": device_name}
                 return await self.async_step_confirm()
 
+        except AbortFlow:
+            # already_configured / already_in_progress must propagate.
+            raise
         except aiohttp.ClientResponseError as err:
             _LOGGER.debug("❌ API returned error %s - going to password step", err.status)
             if err.status == 401:
@@ -147,12 +150,18 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 else:
                     errors["base"] = "no_device_id"
+            except AbortFlow:
+                # already_configured / already_in_progress must propagate, not be
+                # relabeled "cannot_connect" by the broad handler below.
+                raise
             except aiohttp.ClientResponseError as err:
                 if err.status == 401:
                     errors["base"] = "invalid_auth"
                 else:
+                    _LOGGER.error("Password step HTTP error (host=%s port=%s): %s", self._host, self._port, err)
                     errors["base"] = "cannot_connect"
-            except Exception:
+            except Exception as err:
+                _LOGGER.exception("Password step failed (host=%s port=%s): %s", self._host, self._port, err)
                 errors["base"] = "cannot_connect"
 
         return self.async_show_form(
@@ -240,12 +249,19 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 else:
                     errors["base"] = "no_device_id"
+            except AbortFlow:
+                # Flow-control signals (already_configured / already_in_progress)
+                # must propagate — they are NOT connection failures. Without this,
+                # the broad `except Exception` below relabels them "cannot_connect".
+                raise
             except aiohttp.ClientResponseError as err:
                 if err.status == 401:
                     errors["base"] = "invalid_auth"
                 else:
+                    _LOGGER.error("Manual add HTTP error (host=%s port=%s): %s", self._host, self._port, err)
                     errors["base"] = "cannot_connect"
-            except Exception:
+            except Exception as err:
+                _LOGGER.exception("Manual add failed (host=%s port=%s): %s", self._host, self._port, err)
                 errors["base"] = "cannot_connect"
 
         return self.async_show_form(
