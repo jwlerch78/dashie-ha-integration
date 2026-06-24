@@ -108,40 +108,36 @@ class DashieMjpegStreamView(HomeAssistantView):
         #     serving even when an upstream HA integration (tapo_control
         #     etc.) has marked the entity ``unavailable``.
         #
-        # We check Frigate's reachability BEFORE preparing the response
-        # so a Frigate-unreachable case can fall back to the entity path
-        # cleanly — once ``prepare()`` fires we've committed to a 200 OK
-        # multipart body and can't switch sources.
+        # stream_frigate_mjpeg confirms Frigate actually serves a frame for
+        # this camera before it prepares the response, so a Frigate failure
+        # (not detected, non-200, or 200-with-no-frames) returns None with
+        # the request still uncommitted — we then fall through to the legacy
+        # entity+ffmpeg path. (Preparing the response up-front, as the
+        # original Phase A code did, committed us to an empty 200 multipart
+        # body and spun the card forever on any Frigate hiccup.)
         if not direct_source:
             from .feed_registry import get_frigate_camera_for_entity
             from .frigate_stream import stream_frigate_mjpeg
-            from .frigate_proxy import _detect_frigate as _fp_detect
 
             frigate_camera = await get_frigate_camera_for_entity(hass, entity_id)
-            if frigate_camera and await _fp_detect():
-                _LOGGER.info(
-                    "Serving MJPEG for %s via Frigate camera %s",
-                    entity_id, frigate_camera,
-                )
-                response = web.StreamResponse(
-                    headers={
-                        "Content-Type": "multipart/x-mixed-replace; boundary=frame",
-                        "Cache-Control": "no-cache, no-store",
-                        "Connection": "keep-alive",
-                    }
-                )
-                await response.prepare(request)
+            if frigate_camera:
                 width_int: int | None
                 try:
                     width_int = int(width) if width else None
                 except ValueError:
                     width_int = None
-                await stream_frigate_mjpeg(response, frigate_camera, fps, width_int)
-                return response
-            if frigate_camera:
+                _LOGGER.info(
+                    "Trying MJPEG for %s via Frigate camera %s",
+                    entity_id, frigate_camera,
+                )
+                frigate_response = await stream_frigate_mjpeg(
+                    request, frigate_camera, fps, width_int
+                )
+                if frigate_response is not None:
+                    return frigate_response
                 _LOGGER.debug(
-                    "MJPEG %s matched Frigate camera %s but Frigate not "
-                    "detected — falling back to entity path",
+                    "MJPEG %s matched Frigate camera %s but Frigate could not "
+                    "serve it — falling back to entity path",
                     entity_id, frigate_camera,
                 )
 

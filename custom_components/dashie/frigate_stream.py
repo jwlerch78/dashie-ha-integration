@@ -46,6 +46,12 @@ _FRIGATE_RTSP_PORT = 8554
 # and the feed falls back to the entity path.
 _FRIGATE_PROBE_TIMEOUT = 2.0
 
+# How long to wait for Frigate's MJPEG endpoint to emit its first frame
+# before giving up and falling back to the legacy entity+ffmpeg path.
+# Frigate can return 200 yet never send a JPEG when the camera is
+# unavailable or detect-only, which would otherwise spin the card forever.
+_FRIGATE_FIRST_FRAME_TIMEOUT = 5.0
+
 
 def build_frigate_rtsp_url(ha_host: str, camera_name: str) -> str:
     """Build the Frigate restream RTSP URL the tablet will connect to.
@@ -81,28 +87,36 @@ async def is_frigate_rtsp_reachable(rtsp_url: str) -> bool:
 
 
 async def stream_frigate_mjpeg(
-    response: web.StreamResponse,
+    request: web.Request,
     camera_name: str,
     fps: int,
     width: int | None,
-) -> bool:
-    """Proxy Frigate's native MJPEG endpoint to ``response``.
+) -> web.StreamResponse | None:
+    """Proxy Frigate's native MJPEG endpoint for ``camera_name``.
 
     Frigate's MJPEG is a much cheaper path than running ffmpeg over the
     HA camera entity — Frigate is already decoding the camera and can
     encode JPEGs directly.
 
-    Returns:
-        True  — Frigate served at least the headers successfully (any
-                subsequent disconnect is treated as a normal client exit).
-        False — Frigate is not detected, or it returned a non-200 before
-                we wrote any bytes. Caller may attempt the legacy ffmpeg
-                path. **Do not call this twice for one response** — once
-                ``response.prepare()`` has run downstream we can't fall
-                back.
+    Crucially, this confirms Frigate is actually serving frames for this
+    camera *before* committing our own response. We open the Frigate
+    stream, require a 200, and peek the first non-empty chunk (bounded by
+    ``_FRIGATE_FIRST_FRAME_TIMEOUT``). Only then do we ``prepare()`` the
+    multipart response and stream. This is what lets a Frigate failure
+    fall back cleanly to the legacy entity+ffmpeg path.
 
-    The caller owns the ``StreamResponse`` headers and ``prepare()``; we
-    only write body chunks here.
+    The previous version prepared the response first and only then hit
+    Frigate, so a non-200 *or* a 200-with-no-frames (camera offline /
+    detect-only) left the tablet committed to an empty 200 multipart body
+    — the card spun forever with no fallback. (Regression from Phase A
+    Frigate auto-routing.)
+
+    Returns:
+        web.StreamResponse — Frigate served a real frame; the response is
+                prepared and fully streamed. The caller returns it as-is.
+        None — Frigate is not detected, returned non-200, or produced no
+                frame in time. The request is still uncommitted, so the
+                caller may fall back to the legacy entity+ffmpeg path.
 
     ``width`` is passed to Frigate as ``h`` (height). Frigate accepts
     only a height parameter and preserves aspect ratio, so the existing
@@ -111,7 +125,7 @@ async def stream_frigate_mjpeg(
     """
     base = await _detect_frigate()
     if not base:
-        return False
+        return None
 
     params: dict[str, str] = {"fps": str(fps)}
     if width:
@@ -119,24 +133,72 @@ async def stream_frigate_mjpeg(
 
     url = f"{base}/api/{camera_name}"
     session = await _get_session()
-    try:
-        async with session.get(url, params=params) as resp:
-            if resp.status != 200:
-                _LOGGER.warning(
-                    "Frigate MJPEG %s returned HTTP %d — falling back",
-                    camera_name, resp.status,
-                )
-                return False
 
+    try:
+        resp = await session.get(url, params=params)
+    except asyncio.CancelledError:
+        raise
+    except Exception as err:
+        _LOGGER.info(
+            "Frigate MJPEG connect for %s failed: %s: %s",
+            camera_name, err.__class__.__name__, err,
+        )
+        return None
+
+    # Once we have ``resp`` we own it — release on every exit path.
+    out: web.StreamResponse | None = None
+    try:
+        if resp.status != 200:
+            _LOGGER.warning(
+                "Frigate MJPEG %s returned HTTP %d — falling back",
+                camera_name, resp.status,
+            )
+            return None
+
+        # Peek the first real frame. Frigate sometimes returns 200 but
+        # never emits a JPEG (camera unavailable / detect-only); treat
+        # that as a failure so the caller falls back instead of spinning.
+        first_chunk: bytes | None = None
+        try:
+            async with asyncio.timeout(_FRIGATE_FIRST_FRAME_TIMEOUT):
+                async for chunk in resp.content.iter_any():
+                    if chunk:
+                        first_chunk = chunk
+                        break
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Frigate MJPEG %s produced no frame in %.0fs — falling back",
+                camera_name, _FRIGATE_FIRST_FRAME_TIMEOUT,
+            )
+            return None
+
+        if not first_chunk:
+            _LOGGER.warning(
+                "Frigate MJPEG %s closed before any frame — falling back",
+                camera_name,
+            )
+            return None
+
+        # Frigate is serving — now (and only now) commit our response.
+        out = web.StreamResponse(
+            headers={
+                "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+                "Cache-Control": "no-cache, no-store",
+                "Connection": "keep-alive",
+            }
+        )
+        await out.prepare(request)
+
+        try:
+            await out.write(first_chunk)
             async for chunk in resp.content.iter_any():
                 if not chunk:
                     continue
-                try:
-                    await response.write(chunk)
-                except (ConnectionResetError, asyncio.CancelledError):
-                    # Tablet closed the card — normal exit.
-                    return True
-            return True
+                await out.write(chunk)
+        except ConnectionResetError:
+            # Tablet closed the card — normal exit.
+            pass
+        return out
     except asyncio.CancelledError:
         # Stream cancelled by caller — propagate, not a Frigate failure.
         raise
@@ -145,6 +207,8 @@ async def stream_frigate_mjpeg(
             "Frigate MJPEG stream %s ended: %s: %s",
             camera_name, err.__class__.__name__, err,
         )
-        # We may have written body bytes already; returning True signals
-        # the caller "do not retry on the legacy path".
-        return True
+        # If ``out`` is prepared we've committed — return it (no fallback).
+        # Otherwise the request is uncommitted; None lets the caller retry.
+        return out
+    finally:
+        resp.release()
