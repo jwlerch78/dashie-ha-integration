@@ -12,7 +12,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEFAULT_SCAN_INTERVAL, API_DEVICE_INFO
+from .const import DEFAULT_SCAN_INTERVAL, API_DEVICE_INFO, host_for_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class DashieCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Coordinator created for %s (id=%s)", host, id(self))
         self.port = port
         self.password = password
-        self.base_url = f"http://{host}:{port}"
+        self.base_url = f"http://{host_for_url(host)}:{port}"
         self._consecutive_failures = 0
         self._session: aiohttp.ClientSession | None = None
         self._is_first_refresh = True

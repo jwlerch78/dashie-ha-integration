@@ -2,6 +2,17 @@
 
 DOMAIN = "dashie"
 
+
+def host_for_url(host: str) -> str:
+    """Bracket an IPv6 literal so it's valid inside an http URL.
+
+    ``http://fc00::1:2323/`` is malformed; ``http://[fc00::1]:2323/`` is correct.
+    IPv4 / hostnames / already-bracketed values pass through unchanged.
+    """
+    if host and ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
 # Config keys
 CONF_HOST = "host"
 CONF_PORT = "port"

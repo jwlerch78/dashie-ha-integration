@@ -18,6 +18,7 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_MEDIA_FOLDER,
+    host_for_url as _host_for_url,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +53,30 @@ def _normalize_host(raw_host: str) -> tuple[str, int | None]:
     return host, port
 
 
+def _select_discovery_host(discovery_info) -> str | None:
+    """Pick the best address from a zeroconf discovery, strongly preferring IPv4.
+
+    Dashie devices advertise an IPv4 plus IPv6 (ULA + ``fe80::`` link-local).
+    ``discovery_info.host`` can surface an IPv6 first; a link-local needs a zone
+    HA core can't use, and any bare IPv6 breaks the unbracketed URL — both of
+    which make the discovery flow silently abort ("didn't auto-detect"). Prefer
+    the first IPv4, then a non-link-local IPv6, and only fall back to ``.host``.
+    """
+    candidates: list[str] = [
+        str(ip) for ip in (getattr(discovery_info, "ip_addresses", None) or [])
+    ]
+    if not candidates and discovery_info.host:
+        candidates.append(discovery_info.host)
+
+    for h in candidates:  # IPv4 first
+        if "." in h and ":" not in h:
+            return h
+    for h in candidates:  # then any non-link-local IPv6
+        if not h.lower().startswith("fe80:") and "%" not in h:
+            return h
+    return candidates[0] if candidates else discovery_info.host
+
+
 class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Dashie."""
 
@@ -74,8 +99,9 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         _LOGGER.debug("  Port: %s", discovery_info.port)
         _LOGGER.debug("  Properties: %s", discovery_info.properties)
 
-        # Extract host and port from zeroconf discovery
-        self._host, _ = _normalize_host(discovery_info.host or "")
+        # Extract host and port from zeroconf discovery — prefer IPv4 over the
+        # advertised IPv6/link-local addresses (a bare IPv6 silently breaks setup).
+        self._host, _ = _normalize_host(_select_discovery_host(discovery_info) or "")
         self._port = discovery_info.port or DEFAULT_PORT
 
         if not self._host:
@@ -316,7 +342,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _fetch_device_info(self) -> dict:
         """Fetch device info from the device."""
         async with aiohttp.ClientSession() as session:
-            url = f"http://{self._host}:{self._port}/?cmd=deviceInfo&type=json"
+            url = f"http://{_host_for_url(self._host)}:{self._port}/?cmd=deviceInfo&type=json"
             if self._password:
                 url += f"&password={self._password}"
 
@@ -367,7 +393,7 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
 
                 try:
                     async with aiohttp.ClientSession() as session:
-                        url = f"http://{host}:{new_port}/?cmd=deviceInfo&type=json"
+                        url = f"http://{_host_for_url(host)}:{new_port}/?cmd=deviceInfo&type=json"
                         if new_password:
                             url += f"&password={new_password}"
 
