@@ -27,7 +27,7 @@ from homeassistant.core import HomeAssistant
 from .stream_proxy import _get_stream_source, _redact_url
 from .go2rtc_manager import Go2RtcManager
 from .feed_registry import get_frigate_camera_for_entity
-from .frigate_stream import build_frigate_rtsp_url, is_frigate_rtsp_reachable
+from .frigate_stream import build_frigate_rtsp_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +73,33 @@ async def _detect_go2rtc(hass: HomeAssistant) -> tuple[bool, str | None]:
     _go2rtc_host = None
     _LOGGER.info("go2rtc not detected — will use raw RTSP URLs")
     return False, None
+
+
+async def _go2rtc_has_rtsp_stream(name: str) -> bool:
+    """True if the host go2rtc currently serves a stream named ``name``.
+
+    The Frigate-routed live path hands the tablet ``rtsp://<host>:8554/<name>``.
+    A bare TCP-reachable probe (port open) is not enough: whichever go2rtc owns
+    the host's 8554 may key its streams by HA ``entity_id`` (Dashie's own go2rtc
+    manager, or HA's built-in go2rtc) and have no stream by the *Frigate camera
+    name* — so DESCRIBE 404s and ExoPlayer spins forever. Verify the name exists
+    before advertising it; otherwise the caller falls back to the entity path,
+    which registers/serves the entity-named stream that already works.
+    """
+    for host in ("127.0.0.1", "localhost"):
+        try:
+            timeout = aiohttp.ClientTimeout(total=3)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    f"http://{host}:{_GO2RTC_API_PORT}/api/streams"
+                ) as resp:
+                    if resp.status != 200:
+                        continue
+                    streams = await resp.json()
+                    return isinstance(streams, dict) and name in streams
+        except Exception:
+            continue
+    return False
 
 
 async def _is_rtsp_reachable(rtsp_url: str, timeout: float = 2.0) -> bool:
@@ -314,7 +341,13 @@ class DashieStreamResolveView(HomeAssistantView):
         if frigate_camera:
             ha_host = request.host.split(":")[0]
             frigate_rtsp = build_frigate_rtsp_url(ha_host, frigate_camera)
-            if await is_frigate_rtsp_reachable(frigate_rtsp):
+            # The host go2rtc must actually SERVE a stream by this name. A bare
+            # TCP-reachable check passes whenever *any* go2rtc holds :8554 —
+            # including Dashie's own go2rtc manager / HA's built-in go2rtc, which
+            # key streams by entity_id, not Frigate camera name. Connecting there
+            # for "<frigate_camera>" 404s on DESCRIBE and spins the tablet. Only
+            # take the Frigate path when the named stream actually exists.
+            if await _go2rtc_has_rtsp_stream(frigate_camera):
                 _LOGGER.info(
                     "Resolved %s via Frigate camera %s → %s",
                     entity_id, frigate_camera, frigate_rtsp,
@@ -325,14 +358,15 @@ class DashieStreamResolveView(HomeAssistantView):
                     "via": "frigate",
                     "frigate_camera": frigate_camera,
                 })
-            # Frigate matched but the restream port is unreachable
-            # (Frigate down, or 8554 not exposed on the HA host).
-            # Falls through to the legacy entity path so behavior on
-            # entry to Phase A is no worse than before.
-            _LOGGER.debug(
-                "Entity %s matched Frigate camera %s but %s is unreachable "
-                "— falling back to entity path",
-                entity_id, frigate_camera, frigate_rtsp,
+            # Frigate matched but the host go2rtc has no stream by that name
+            # (e.g. the go2rtc on :8554 keys streams by entity_id, or Frigate's
+            # restream isn't the one exposed on the HA host). Fall through to the
+            # legacy entity path, which registers/serves the entity-named stream
+            # that works — so behavior is no worse than before Phase A.
+            _LOGGER.info(
+                "Entity %s matched Frigate camera %s but host go2rtc has no "
+                "'%s' stream — falling back to entity path",
+                entity_id, frigate_camera, frigate_camera,
             )
 
         # Get the raw RTSP source URL from HA
