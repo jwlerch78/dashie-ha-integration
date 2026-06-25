@@ -31,6 +31,7 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 ADDON_PORT = 8099
 _CREDENTIAL_PATH = "/api/internal/account-credential"
 _SHARING_STATUS_PATH = "/api/internal/sharing-status"
+_VOICE_CONFIG_PATH = "/api/internal/voice-config"
 # On-prem brain (local model, runs IN the add-on — build plan §13.16/§13.17).
 _CONVERSE_LOCAL_PATH = "/api/voice/converse-local"
 
@@ -175,6 +176,30 @@ async def get_sharing_status(hass: HomeAssistant) -> dict:
         _working_base = base
         return data or {"available": False, "reason": "bad_response"}
     return {"available": False, "reason": "addon_unreachable"}
+
+
+async def get_voice_config(hass: HomeAssistant) -> dict:
+    """The account's voice ROUTE, read by the add-on from user_settings (build plan §13.17/§16.7).
+
+    Returns the add-on's `{route: 'local'|'cloud', model_is_local: bool}` so the gateway can route
+    cloud-vs-local based on the account's selected AI model ("My Local LLM" → local) WITHOUT the
+    integration reading Supabase. Defaults to `{route: 'cloud'}` when the add-on is unreachable —
+    never raises (the gateway must keep working).
+    """
+    global _working_base
+    session = async_get_clientsession(hass)
+    bases = await _resolve_bases(session)
+    for base in bases:
+        try:
+            async with session.get(f"{base}{_VOICE_CONFIG_PATH}", timeout=_TIMEOUT) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json(content_type=None)
+        except Exception:  # noqa: BLE001
+            continue
+        _working_base = base
+        return data or {"route": "cloud"}
+    return {"route": "cloud"}
 
 
 async def converse_local(hass: HomeAssistant, payload: dict) -> tuple[dict, int]:

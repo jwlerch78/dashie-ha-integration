@@ -33,6 +33,7 @@ from .addon_bridge import (
     converse_local,
     get_account_credential,
     get_sharing_status,
+    get_voice_config,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,11 +78,15 @@ class DashieVoiceConverseView(HomeAssistantView):
                 payload[key] = body[key]
 
         # ── Route selection: cloud brain (default) vs on-prem add-on brain ─────
-        # options.route == "local" → run the brain IN the add-on against a LAN model
-        # (build plan §13.17). No account credential needed (the add-on holds it and
-        # gates on the same sharing opt-in). The AUTO-decision (account model config
-        # → route) is Wave 2; today the caller sets options.route explicitly.
-        if options.get("route") == "local":
+        # Precedence (build plan §13.17):
+        #   1. explicit options.route — a per-request override (the kiosk dev toggle / harness),
+        #   2. else the ACCOUNT's selected model — "My Local LLM" (ai.model=='local') → local.
+        # The add-on is the single reader of user_settings; we just ask it for the route. So
+        # selecting "My Local LLM" in the Console routes every endpoint here with no per-device flag.
+        route = options.get("route")
+        if route is None:
+            route = (await get_voice_config(hass)).get("route", "cloud")
+        if route == "local":
             try:
                 turn, status = await converse_local(hass, payload)
             except SharingDisabled:
