@@ -31,6 +31,8 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 ADDON_PORT = 8099
 _CREDENTIAL_PATH = "/api/internal/account-credential"
 _SHARING_STATUS_PATH = "/api/internal/sharing-status"
+# On-prem brain (local model, runs IN the add-on — build plan §13.16/§13.17).
+_CONVERSE_LOCAL_PATH = "/api/voice/converse-local"
 
 # Fallback addresses if Supervisor discovery is unavailable.
 # TODO(config): also allow a config_flow override.
@@ -41,6 +43,9 @@ _ADDON_CANDIDATES = (
 
 _REFRESH_SKEW = 120.0
 _TIMEOUT = ClientTimeout(total=5)
+# Brain calls run model inference on-prem (a LAN model, possibly cold) → far longer than
+# the 5s control timeout. Build plan §13.10 measured ~10s cold on a Mac 7B.
+_BRAIN_TIMEOUT = ClientTimeout(total=60)
 
 _cache: dict = {"jwt": None, "exp": 0.0}
 _working_base: str | None = None
@@ -170,6 +175,42 @@ async def get_sharing_status(hass: HomeAssistant) -> dict:
         _working_base = base
         return data or {"available": False, "reason": "bad_response"}
     return {"available": False, "reason": "addon_unreachable"}
+
+
+async def converse_local(hass: HomeAssistant, payload: dict) -> tuple[dict, int]:
+    """Run a transcript through the add-on's ON-PREM brain (local model on the HA machine).
+
+    POSTs to the add-on's /api/voice/converse-local (build plan §13.16/§13.17). The add-on
+    runs the SAME brain core the cloud edge fn runs, but against a LAN model — nothing but the
+    optional tool calls leaves the LAN. No account credential is needed (the add-on holds it
+    internally and gates the route on the same household-sharing opt-in).
+
+    Returns (turn_dict, status). Raises SharingDisabled on 403, AddonUnavailable if unreachable.
+    """
+    global _working_base
+    session = async_get_clientsession(hass)
+    bases = await _resolve_bases(session)
+
+    last_err = "no candidates"
+    for base in bases:
+        url = f"{base}{_CONVERSE_LOCAL_PATH}"
+        try:
+            async with session.post(url, json=payload, timeout=_BRAIN_TIMEOUT) as resp:
+                status = resp.status
+                body = await resp.json(content_type=None) if status != 403 else None
+        except Exception as err:  # noqa: BLE001
+            last_err = f"{base}: {err}"
+            continue
+
+        # 403 = add-on reachable but household sharing is off — definitive, don't try other bases.
+        if status == 403:
+            _working_base = base
+            raise SharingDisabled("household sharing disabled")
+
+        _working_base = base
+        return (body or {}), status
+
+    raise AddonUnavailable(last_err)
 
 
 def _parse_expiry(iso: str | None, now: float) -> float:

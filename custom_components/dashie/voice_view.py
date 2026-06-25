@@ -30,6 +30,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .addon_bridge import (
     AddonUnavailable,
     SharingDisabled,
+    converse_local,
     get_account_credential,
     get_sharing_status,
 )
@@ -60,15 +61,6 @@ class DashieVoiceConverseView(HomeAssistantView):
         if not text or not isinstance(text, str):
             return web.json_response({"ok": False, "error": "text_required"}, status=400)
 
-        # Gated on the add-on's household-sharing opt-in: get_account_credential
-        # raises SharingDisabled (403) when the account holder hasn't enabled it.
-        try:
-            cred = await get_account_credential(hass)  # account JWT, from the add-on
-        except SharingDisabled:
-            return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403)
-        except AddonUnavailable as err:
-            return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
-
         endpoint_id = body.get("endpoint_id") or "ha-voice"
         # Caller-mode retention (§17): the brain must NEVER persist transcript text
         # to Supabase for kiosk turns — it only signals metadata.retain_transcript,
@@ -83,6 +75,31 @@ class DashieVoiceConverseView(HomeAssistantView):
         for key in ("history", "provided_context", "conversation_id"):
             if body.get(key) is not None:
                 payload[key] = body[key]
+
+        # ── Route selection: cloud brain (default) vs on-prem add-on brain ─────
+        # options.route == "local" → run the brain IN the add-on against a LAN model
+        # (build plan §13.17). No account credential needed (the add-on holds it and
+        # gates on the same sharing opt-in). The AUTO-decision (account model config
+        # → route) is Wave 2; today the caller sets options.route explicitly.
+        if options.get("route") == "local":
+            try:
+                turn, status = await converse_local(hass, payload)
+            except SharingDisabled:
+                return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403)
+            except AddonUnavailable as err:
+                return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
+            await self._maybe_retain(hass, turn, text, endpoint_id, payload)
+            return web.json_response(turn, status=(200 if status < 400 else status))
+
+        # ── Cloud brain path ──────────────────────────────────────────────────
+        # Gated on the add-on's household-sharing opt-in: get_account_credential
+        # raises SharingDisabled (403) when the account holder hasn't enabled it.
+        try:
+            cred = await get_account_credential(hass)  # account JWT, from the add-on
+        except SharingDisabled:
+            return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403)
+        except AddonUnavailable as err:
+            return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
 
         session = async_get_clientsession(hass)
         try:
@@ -101,8 +118,14 @@ class DashieVoiceConverseView(HomeAssistantView):
             _LOGGER.warning("voice converse → brain failed: %s", err)
             return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502)
 
-        # Store the transcript HA-locally only when the account opted in (the brain
-        # tells us via metadata.retain_transcript). Never blocks/breaks the turn.
+        await self._maybe_retain(hass, turn, text, endpoint_id, payload)
+        return web.json_response(turn, status=status)
+
+    @staticmethod
+    async def _maybe_retain(hass, turn, text, endpoint_id, payload) -> None:
+        """Store the transcript HA-locally only when the account opted in (the brain
+        signals it via metadata.retain_transcript). Never blocks/breaks the turn.
+        Shared by both the cloud and on-prem brain paths."""
         try:
             meta = turn.get("metadata") if isinstance(turn, dict) else None
             if meta and meta.get("retain_transcript"):
@@ -117,8 +140,6 @@ class DashieVoiceConverseView(HomeAssistantView):
                     )
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("transcript retention skipped: %s", err)
-
-        return web.json_response(turn, status=status)
 
 
 class DashieVoiceStatusView(HomeAssistantView):
