@@ -10,6 +10,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_PASSWORD
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     DOMAIN,
@@ -341,27 +342,28 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _fetch_device_info(self) -> dict:
         """Fetch device info from the device."""
-        async with aiohttp.ClientSession() as session:
-            url = f"http://{_host_for_url(self._host)}:{self._port}/?cmd=deviceInfo&type=json"
-            if self._password:
-                url += f"&password={self._password}"
+        # Reuse HA's shared client session (don't spin up a per-call session).
+        session = async_get_clientsession(self.hass)
+        url = f"http://{_host_for_url(self._host)}:{self._port}/?cmd=deviceInfo&type=json"
+        if self._password:
+            url += f"&password={self._password}"
 
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5, connect=3)) as response:
-                response.raise_for_status()
-                data = await response.json()
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5, connect=3)) as response:
+            response.raise_for_status()
+            data = await response.json()
 
-                # Check for error response (API returns 200 with error in body)
-                if data.get("status") == "ERROR":
-                    if "password" in data.get("message", "").lower():
-                        raise aiohttp.ClientResponseError(
-                            request_info=response.request_info,
-                            history=(),
-                            status=401,
-                            message="Invalid password",
-                        )
-                    raise Exception(data.get("message", "Unknown error"))
+            # Check for error response (API returns 200 with error in body)
+            if data.get("status") == "ERROR":
+                if "password" in data.get("message", "").lower():
+                    raise aiohttp.ClientResponseError(
+                        request_info=response.request_info,
+                        history=(),
+                        status=401,
+                        message="Invalid password",
+                    )
+                raise Exception(data.get("message", "Unknown error"))
 
-                return data
+            return data
 
     @staticmethod
     def async_get_options_flow(
@@ -392,23 +394,23 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
                 host = self.config_entry.data.get(CONF_HOST)
 
                 try:
-                    async with aiohttp.ClientSession() as session:
-                        url = f"http://{_host_for_url(host)}:{new_port}/?cmd=deviceInfo&type=json"
-                        if new_password:
-                            url += f"&password={new_password}"
+                    session = async_get_clientsession(self.hass)
+                    url = f"http://{_host_for_url(host)}:{new_port}/?cmd=deviceInfo&type=json"
+                    if new_password:
+                        url += f"&password={new_password}"
 
-                        async with session.get(
-                            url, timeout=aiohttp.ClientTimeout(total=5, connect=3)
-                        ) as response:
-                            response.raise_for_status()
-                            data = await response.json()
+                    async with session.get(
+                        url, timeout=aiohttp.ClientTimeout(total=5, connect=3)
+                    ) as response:
+                        response.raise_for_status()
+                        data = await response.json()
 
-                            # Check for error response
-                            if data.get("status") == "ERROR":
-                                if "password" in data.get("message", "").lower():
-                                    errors["base"] = "invalid_auth"
-                                else:
-                                    errors["base"] = "cannot_connect"
+                        # Check for error response
+                        if data.get("status") == "ERROR":
+                            if "password" in data.get("message", "").lower():
+                                errors["base"] = "invalid_auth"
+                            else:
+                                errors["base"] = "cannot_connect"
                 except aiohttp.ClientResponseError as err:
                     if err.status == 401:
                         errors["base"] = "invalid_auth"
