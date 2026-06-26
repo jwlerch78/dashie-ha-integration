@@ -24,8 +24,9 @@ MAX_BACKOFF = 300
 MEDIUM_BACKOFF_THRESHOLD = 4   # Switch to 60s after 4 failures
 MAX_BACKOFF_THRESHOLD = 12     # Switch to 5 min after 12 failures
 
-# HTTP timeouts for local network devices
-HTTP_TIMEOUT = aiohttp.ClientTimeout(total=8, connect=5)
+# HTTP timeouts for local network devices. Generous total to tolerate slow,
+# memory-pressured devices (e.g. Echo Show 5) whose API thread stalls under GC.
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
 
 
 class DashieCoordinator(DataUpdateCoordinator):

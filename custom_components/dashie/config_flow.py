@@ -348,7 +348,7 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._password:
             url += f"&password={self._password}"
 
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5, connect=3)) as response:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15, connect=5)) as response:
             response.raise_for_status()
             data = await response.json()
 
@@ -400,7 +400,7 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
                         url += f"&password={new_password}"
 
                     async with session.get(
-                        url, timeout=aiohttp.ClientTimeout(total=5, connect=3)
+                        url, timeout=aiohttp.ClientTimeout(total=15, connect=5)
                     ) as response:
                         response.raise_for_status()
                         data = await response.json()
