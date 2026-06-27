@@ -9,7 +9,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import CoreState, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -127,7 +127,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # no entities in the entity registry, it's likely an orphaned config entry
     # from a failed deletion. Disabled entities still count — we only remove
     # entries with zero entities.
-    if not coordinator.last_update_success:
+    #
+    # CRITICAL: only do this during HA startup (orphans load with the rest of
+    # config). A freshly-added entry (added while HA is RUNNING) legitimately has
+    # no entities yet AND may fail its very first poll on a slow/temporarily-busy
+    # device — removing it there causes an add→"Success"→vanish→rediscover loop.
+    # Keep new entries loaded; their entities come up unavailable until the device
+    # answers (matches the async_refresh() intent above).
+    if not coordinator.last_update_success and hass.state is not CoreState.running:
         entity_registry = er.async_get(hass)
         entities = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
         if not entities:
