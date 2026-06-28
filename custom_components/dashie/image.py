@@ -51,7 +51,7 @@ class DashieScreenshot(DashieEntity, ImageEntity):
     async def async_image(self) -> bytes | None:
         """Return a screenshot from the device."""
         try:
-            timeout = aiohttp.ClientTimeout(total=5)
+            timeout = aiohttp.ClientTimeout(total=8)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 url = f"{self.coordinator.base_url}/?cmd={API_GET_SCREENSHOT}"
                 if self.coordinator.password:
