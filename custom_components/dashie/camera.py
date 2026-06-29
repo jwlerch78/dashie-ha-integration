@@ -13,6 +13,7 @@ from homeassistant.components.camera import Camera, CameraEntityFeature, StreamT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     DOMAIN,
@@ -117,40 +118,41 @@ class DashieCamera(DashieEntity, Camera):
             return None
 
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                url = f"{self.coordinator.base_url}/?cmd=getCamshot"
-                if self.coordinator.password:
-                    url += f"&password={self.coordinator.password}"
+            # Reuse HA's shared session (don't spin up a per-call session/connector).
+            session = async_get_clientsession(self.coordinator.hass)
+            url = f"{self.coordinator.base_url}/?cmd=getCamshot"
+            if self.coordinator.password:
+                url += f"&password={self.coordinator.password}"
 
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        content_type = response.headers.get("Content-Type", "")
-                        if "image" in content_type:
-                            image_data = await response.read()
+            timeout = aiohttp.ClientTimeout(total=15, connect=5)
+            async with session.get(url, timeout=timeout) as response:
+                if response.status == 200:
+                    content_type = response.headers.get("Content-Type", "")
+                    if "image" in content_type:
+                        image_data = await response.read()
 
-                            # Fix orientation to match RTSP stream:
-                            # 1. Rotate 180° (upside down fix)
-                            # 2. Horizontal flip (un-mirror front camera)
-                            try:
-                                image = Image.open(io.BytesIO(image_data))
-                                rotated = image.rotate(180, expand=True)
-                                flipped = rotated.transpose(Image.FLIP_LEFT_RIGHT)
+                        # Fix orientation to match RTSP stream:
+                        # 1. Rotate 180° (upside down fix)
+                        # 2. Horizontal flip (un-mirror front camera)
+                        try:
+                            image = Image.open(io.BytesIO(image_data))
+                            rotated = image.rotate(180, expand=True)
+                            flipped = rotated.transpose(Image.FLIP_LEFT_RIGHT)
 
-                                # Convert back to JPEG bytes
-                                output = io.BytesIO()
-                                flipped.save(output, format="JPEG", quality=85)
-                                self._last_image = output.getvalue()
-                                return self._last_image
-                            except Exception as err:
-                                _LOGGER.warning("Failed to rotate image: %s (returning original)", err)
-                                self._last_image = image_data
-                                return self._last_image
-                        # API returned JSON error instead of image
-                        _LOGGER.debug("Camera returned non-image response")
-                        return self._last_image  # Return cached image if available
-                    _LOGGER.warning("Failed to get camera image: %s", response.status)
-                    return self._last_image
+                            # Convert back to JPEG bytes
+                            output = io.BytesIO()
+                            flipped.save(output, format="JPEG", quality=85)
+                            self._last_image = output.getvalue()
+                            return self._last_image
+                        except Exception as err:
+                            _LOGGER.warning("Failed to rotate image: %s (returning original)", err)
+                            self._last_image = image_data
+                            return self._last_image
+                    # API returned JSON error instead of image
+                    _LOGGER.debug("Camera returned non-image response")
+                    return self._last_image  # Return cached image if available
+                _LOGGER.warning("Failed to get camera image: %s", response.status)
+                return self._last_image
         except asyncio.TimeoutError:
             _LOGGER.warning("Timeout getting camera image from %s", self.coordinator.host)
             return self._last_image
@@ -181,19 +183,19 @@ class DashieCamera(DashieEntity, Camera):
 
         # Fallback: fetch directly from device (for immediate response)
         try:
-            timeout = aiohttp.ClientTimeout(total=5)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                url = f"{self.coordinator.base_url}/?cmd=getRtspStatus"
-                if self.coordinator.password:
-                    url += f"&password={self.coordinator.password}"
+            session = async_get_clientsession(self.coordinator.hass)
+            url = f"{self.coordinator.base_url}/?cmd=getRtspStatus"
+            if self.coordinator.password:
+                url += f"&password={self.coordinator.password}"
 
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get("isStreaming"):
-                            self._stream_url = data.get("streamUrl")
-                            _LOGGER.debug("stream_source returning URL from device API: %s", self._stream_url)
-                            return self._stream_url
+            timeout = aiohttp.ClientTimeout(total=15, connect=5)
+            async with session.get(url, timeout=timeout) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("isStreaming"):
+                        self._stream_url = data.get("streamUrl")
+                        _LOGGER.debug("stream_source returning URL from device API: %s", self._stream_url)
+                        return self._stream_url
         except Exception as err:
             _LOGGER.debug("Could not get RTSP status: %s", err)
 
