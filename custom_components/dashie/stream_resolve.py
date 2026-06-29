@@ -434,9 +434,19 @@ class DashieStreamResolveView(HomeAssistantView):
                         "available": available,
                     })
 
-        # No RTSP available — tablet will use MJPEG fallback
-        rtsp_url = None
-        return web.json_response({"rtsp_url": rtsp_url, "available": available})
+        # No RTSP URL to hand the tablet. It will use the MJPEG fallback — but
+        # that path needs the SAME stream source (ffmpeg over raw_rtsp). So:
+        #   - raw_rtsp found, but go2rtc registration didn't yield a URL:
+        #     the source exists, MJPEG/ffmpeg can still serve it → keep
+        #     `available` (state-based).
+        #   - raw_rtsp is None (no stream source at all, e.g. a device camera
+        #     that isn't publishing — state="idle" but nothing to stream):
+        #     neither RTSP nor MJPEG can serve it. Report offline so the tablet
+        #     shows it as unavailable instead of a blank/green card.
+        return web.json_response({
+            "rtsp_url": None,
+            "available": available if raw_rtsp else False,
+        })
 
 
 def register_stream_resolve_views(hass: HomeAssistant) -> None:
