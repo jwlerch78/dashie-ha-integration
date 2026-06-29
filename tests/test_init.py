@@ -50,3 +50,38 @@ async def test_fresh_add_survives_failed_first_poll(hass: HomeAssistant) -> None
     # The entry must NOT have been ghost-removed.
     remaining = {e.entry_id for e in hass.config_entries.async_entries(DOMAIN)}
     assert entry.entry_id in remaining, "fresh entry was removed on a failed first poll"
+
+
+async def test_entities_recover_after_failed_first_poll(hass: HomeAssistant) -> None:
+    """After a failed first poll the entry stays with no data; once the device
+    answers, the coordinator recovers (unavailable → available)."""
+    hass.set_state(CoreState.running)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=DEVICE_ID,
+        data={"host": IPV4, "port": 2323, "device_id": DEVICE_ID},
+    )
+    entry.add_to_hass(hass)
+
+    with aioresponses() as mock, patch(
+        "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+        AsyncMock(return_value=True),
+    ):
+        mock.get(f"{BASE}/?cmd=deviceInfo&type=json", exception=asyncio.TimeoutError(), repeat=True)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert coordinator.last_update_success is False  # entities would be unavailable
+
+    # Device comes back online → next poll succeeds → entities populate.
+    with aioresponses() as mock:
+        mock.get(
+            f"{BASE}/?cmd=deviceInfo&type=json",
+            payload={"deviceID": DEVICE_ID, "stableDeviceID": DEVICE_ID, "deviceName": "Echo"},
+            repeat=True,
+        )
+        await coordinator.async_refresh()
+
+    assert coordinator.last_update_success is True
+    assert coordinator.data["deviceID"] == DEVICE_ID
