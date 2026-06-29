@@ -146,7 +146,11 @@ class DashieCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         """Fetch data from Dashie device."""
         try:
-            async with asyncio.timeout(10):
+            # Outer guard must exceed the per-request HTTP_TIMEOUT (15s) so it
+            # doesn't undercut it — otherwise a slow/memory-pressured device that
+            # the config flow can reach in ~10-15s gets added but its polls time
+            # out here, leaving every entity unavailable.
+            async with asyncio.timeout(20):
                 data = await self._fetch_device_info()
                 # Reset failure counter and backoff on success
                 self._reset_backoff()
