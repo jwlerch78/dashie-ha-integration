@@ -95,6 +95,10 @@ class DashieMjpegStreamView(HomeAssistantView):
         quality = int(request.query.get("quality", DEFAULT_QUALITY))
         width = request.query.get("width")
         direct_source = request.query.get("source")  # Optional direct RTSP URL
+        if direct_source and not _is_allowed_source(direct_source):
+            return web.json_response(
+                {"error": "Invalid source: only rtsp:// is allowed"}, status=400,
+            )
 
         # Phase A: Frigate-routed MJPEG.
         #
@@ -380,6 +384,15 @@ async def _detect_hw_accel() -> str:
     return _hw_accel
 
 
+def _is_allowed_source(url: str) -> bool:
+    """Only allow RTSP(S) for the optional ?source= param.
+
+    Blocks the FFmpeg ``-i`` SSRF / local-file-read class (file://, http://,
+    concat:, ...) on these stream endpoints.
+    """
+    return url.lower().startswith(("rtsp://", "rtsps://"))
+
+
 def _build_ffmpeg_cmd(
     stream_source: str, fps: int, quality: int, width: str | None,
     hw_accel: str = "software",
@@ -392,6 +405,15 @@ def _build_ffmpeg_cmd(
     - v4l2m2m: HW H.264 decode via RPi VideoCore + SW MJPEG encode
     - software: Pure CPU (default)
     """
+    # Sanitize width: bounded int (as str) or None. It enters the FFmpeg -vf
+    # filtergraph (scale=WIDTH:-1), so a raw query string would allow
+    # filtergraph injection on these endpoints.
+    if width is not None:
+        try:
+            _w = int(width)
+            width = str(_w) if 1 <= _w <= 7680 else None
+        except (TypeError, ValueError):
+            width = None
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -938,6 +960,10 @@ class DashieSnapshotView(HomeAssistantView):
 
         # Slow path: resolve the entity's stream source and grab a single frame.
         direct_source = request.query.get("source")
+        if direct_source and not _is_allowed_source(direct_source):
+            return web.json_response(
+                {"error": "Invalid source: only rtsp:// is allowed"}, status=400,
+            )
         if direct_source:
             stream_source = direct_source
         else:
