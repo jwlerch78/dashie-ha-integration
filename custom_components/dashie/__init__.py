@@ -29,6 +29,7 @@ from .const import (
 from .const import CONF_DEVICE_ID
 from .coordinator import DashieCoordinator
 from .feed_registry import FeedRegistry, register_feed_registry_views
+from .feed_discovery import register_feed_discovery_views
 from .media_api import register_media_api_views
 from .music_token_store import MusicTokenStore, register_music_token_views
 from .immich_token_store import ImmichTokenStore, register_immich_token_views
@@ -207,6 +208,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if not _feed_registry_registered:
         register_feed_registry_views(hass)
+        register_feed_discovery_views(hass)
         _feed_registry_registered = True
         _LOGGER.info("Registered Dashie feed registry views")
 
