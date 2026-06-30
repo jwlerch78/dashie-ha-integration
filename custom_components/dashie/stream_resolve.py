@@ -13,6 +13,7 @@ Response: {"rtsp_url": "rtsp://..."} or {"rtsp_url": null}
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
 from urllib.parse import urlparse
@@ -118,6 +119,41 @@ async def _is_rtsp_reachable(rtsp_url: str, timeout: float = 2.0) -> bool:
         return True
     except Exception:
         return False
+
+
+def _externalize_rtsp_host(url: str, ha_host: str) -> str:
+    """Rewrite a Docker-internal hostname in an RTSP URL to ``ha_host``.
+
+    Frigate/go2rtc camera entities report their restream URL using the
+    add-on's *container* hostname (e.g. ``rtsp://ccab4aaf-frigate-fa:8554/cam``),
+    which only resolves inside HA's Docker network. A tablet handed that URL
+    fails DNS (``EAI_NODATA``) and the card stays green. The same stream is
+    reachable at the HA host's mapped port, so swap the host while keeping
+    scheme, credentials, port, and path.
+
+    Only single-label hostnames (no dots, not an IP) are rewritten — real LAN
+    cameras use IPs or dotted/mDNS names, which are left untouched.
+    """
+    try:
+        p = urlparse(url)
+        host = p.hostname or ""
+        if not host:
+            return url
+        try:
+            ipaddress.ip_address(host)
+            return url  # an IP — already tablet-reachable
+        except ValueError:
+            pass
+        if "." in host:
+            return url  # FQDN / *.local mDNS — leave it
+        # Single-label (Docker-internal) host → rewrite to the HA host.
+        userinfo = ""
+        if p.username:
+            userinfo = p.username + (f":{p.password}" if p.password else "") + "@"
+        port = f":{p.port}" if p.port else ""
+        return f"{p.scheme}://{userinfo}{ha_host}{port}{p.path or ''}"
+    except Exception:  # noqa: BLE001 — never break resolve over a URL edge case
+        return url
 
 
 async def _get_go2rtc_stream_name(host: str, entity_id: str) -> str | None:
@@ -371,6 +407,13 @@ class DashieStreamResolveView(HomeAssistantView):
 
         # Get the raw RTSP source URL from HA
         raw_rtsp = await _get_stream_source(hass, entity_id)
+        # A Frigate/go2rtc camera entity reports its restream URL with the
+        # add-on's Docker-internal hostname — unresolvable from tablets. Swap
+        # it for the HA host so the URL we hand out is LAN-reachable. No-op for
+        # IP-based camera sources (the common case).
+        if raw_rtsp:
+            ha_host = request.host.split(":")[0]
+            raw_rtsp = _externalize_rtsp_host(raw_rtsp, ha_host)
         has_credentials = bool(
             raw_rtsp
             and "@" in raw_rtsp.split("//", 1)[-1].split("/", 1)[0]
