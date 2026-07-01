@@ -42,6 +42,10 @@ _LOGGER = logging.getLogger(__name__)
 # TODO(config): derive per-environment (staging vs prod) instead of hardcoding.
 BRAIN_URL = "https://cwglbtosingboqepsmjk.supabase.co/functions/v1/voice-conversation"
 
+# Mints the short-lived, STT-scoped credential an anonymous tablet streams Deepgram with.
+# TODO(config): derive per-environment alongside BRAIN_URL.
+ISSUE_STT_TOKEN_URL = "https://cwglbtosingboqepsmjk.supabase.co/functions/v1/issue-stt-token"
+
 
 class DashieVoiceConverseView(HomeAssistantView):
     """Authed by the HA token; calls the brain on the account's behalf."""
@@ -168,8 +172,67 @@ class DashieVoiceStatusView(HomeAssistantView):
         })
 
 
+class DashieVoiceSessionView(HomeAssistantView):
+    """Vend a short-lived STT token bundle to an anonymous endpoint (build plan §3.2 WS2).
+
+    Authed by the HA token the tablet already holds. Gets the account credential from the
+    add-on (gated on household-sharing), mints an STT-scoped token via `issue-stt-token`,
+    and returns `{stt_token, endpoint_id, expires_at}`. The tablet streams `deepgram-stt-stream`
+    directly with `stt_token` (server VAD preserved, no per-utterance latency), and continues
+    to send its transcript to the converse view (HA-token authed) — so no full account JWT ever
+    reaches the device. Deepgram quality on an anonymous tablet, denial-of-wallet hole closed.
+    """
+
+    url = "/api/dashie/voice/session"
+    name = "api:dashie:voice:session"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        endpoint_id = (body or {}).get("endpoint_id") or "ha-voice"
+
+        # Account credential from the add-on — raises SharingDisabled (403) when the account
+        # holder hasn't enabled household sharing, AddonUnavailable (503) when unreachable.
+        try:
+            cred = await get_account_credential(hass)
+        except SharingDisabled:
+            return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403)
+        except AddonUnavailable as err:
+            return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
+
+        session = async_get_clientsession(hass)
+        mint_body = {"endpoint_id": endpoint_id}
+        if body.get("ttl_seconds") is not None:
+            mint_body["ttl_seconds"] = body["ttl_seconds"]
+        try:
+            async with session.post(
+                ISSUE_STT_TOKEN_URL,
+                json=mint_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {cred}",
+                    "apikey": cred,
+                },
+            ) as resp:
+                bundle = await resp.json(content_type=None)
+                status = resp.status
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("voice session → issue-stt-token failed: %s", err)
+            return web.json_response({"ok": False, "error": f"mint_failed: {err}"}, status=502)
+
+        if status >= 400:
+            return web.json_response({"ok": False, "error": "mint_rejected", "detail": bundle}, status=status)
+        return web.json_response(bundle, status=200)
+
+
 def register_voice_views(hass: HomeAssistant) -> None:
     """Register Dashie voice gateway HTTP views."""
     hass.http.register_view(DashieVoiceConverseView())
     hass.http.register_view(DashieVoiceStatusView())
+    hass.http.register_view(DashieVoiceSessionView())
     _LOGGER.info("Registered Dashie voice gateway views")
