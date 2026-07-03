@@ -51,6 +51,10 @@ _BRAIN_TIMEOUT = ClientTimeout(total=60)
 _cache: dict = {"jwt": None, "exp": 0.0}
 _working_base: str | None = None
 
+# FB5: bound how often we re-probe household-sharing (revocation latency vs per-call cost).
+_SHARING_TTL = 30.0
+_sharing_cache: dict = {"off": False, "exp": 0.0}
+
 
 class AddonUnavailable(Exception):
     """The Dashie add-on / account credential isn't reachable."""
@@ -111,9 +115,16 @@ async def _discover_via_supervisor(session) -> str | None:
 
 
 async def get_account_credential(hass: HomeAssistant) -> str:
-    """Return the account JWT used to authenticate brain calls (cached until near expiry)."""
+    """Return the account JWT used to authenticate brain calls (cached until near expiry).
+
+    FB5: also re-checks household-sharing (30s-TTL) even on a cache hit — otherwise a revoked
+    sharing toggle wouldn't take effect until the cached JWT expired, so both the /session STT
+    mint and the cloud converse path would keep spending the account's credits after a revoke.
+    """
     global _working_base
     now = time.time()
+    if await _sharing_is_off(hass):
+        raise SharingDisabled("household sharing disabled")
     if _cache["jwt"] and now < _cache["exp"] - _REFRESH_SKEW:
         return _cache["jwt"]
 
@@ -176,6 +187,24 @@ async def get_sharing_status(hass: HomeAssistant) -> dict:
         _working_base = base
         return data or {"available": False, "reason": "bad_response"}
     return {"available": False, "reason": "addon_unreachable"}
+
+
+async def _sharing_is_off(hass: HomeAssistant) -> bool:
+    """True only when the add-on POSITIVELY reports household-sharing OFF (30s-TTL cached).
+
+    FB5: get_account_credential serves a cached JWT, so without this a revoked sharing toggle
+    wouldn't take effect until the JWT expired. Cached for _SHARING_TTL so we don't probe on
+    every credential fetch; an unreachable/ambiguous status is treated as "not off" (fall through
+    to existing behavior — no new failure modes, no per-turn latency spike).
+    """
+    now = time.time()
+    if now < _sharing_cache["exp"]:
+        return _sharing_cache["off"]
+    status = await get_sharing_status(hass)  # never raises
+    off = status.get("household_sharing") is False
+    _sharing_cache["off"] = off
+    _sharing_cache["exp"] = now + _SHARING_TTL
+    return off
 
 
 async def get_voice_config(hass: HomeAssistant) -> dict:
