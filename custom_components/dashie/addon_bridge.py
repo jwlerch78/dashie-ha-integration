@@ -8,10 +8,13 @@ Reaching the add-on: we ask the **Supervisor** for the add-on's IP (bypasses
 internal-DNS quirks), falling back to a few candidate hostnames. The resolved
 base URL is cached once it works.
 
-⚠️ v1 SECURITY = network-trust. The add-on's `/api/internal/account-credential`
-is ingress-only (not externally exposed) but is not yet authenticated. Acceptable
-for single-household dev; HARDEN before wider use (shared secret / scoped token).
-Tracked in tech-debt.
+🔐 SECURITY (Lever 1): internal calls carry a shared bridge secret
+(X-Dashie-Bridge-Secret) that the add-on provisions to its addon_config
+(/config/addon_configs/dashie/bridge_secret — readable by this integration, not by
+other add-ons). The add-on rejects unauthenticated callers once `bridge_auth_enforce`
+is flipped on (observe-mode logs-but-allows until then). Build plan
+20260702_BRIDGE_AUTH_HARDENING.md. Follow-up (Lever 2, not built): vend a scoped
+token instead of the raw account JWT to shrink the blast radius of a leaked secret.
 """
 from __future__ import annotations
 
@@ -34,6 +37,15 @@ _SHARING_STATUS_PATH = "/api/internal/sharing-status"
 _VOICE_CONFIG_PATH = "/api/internal/voice-config"
 # On-prem brain (local model, runs IN the add-on — build plan §13.16/§13.17).
 _CONVERSE_LOCAL_PATH = "/api/voice/converse-local"
+
+# Shared bridge secret (Lever 1, build plan 20260702_BRIDGE_AUTH_HARDENING.md). The add-on
+# provisions it to its addon_config, surfaced to HA Core at /config/addon_configs/dashie/. We
+# read it once (cached) and present it on every /api/internal/* call so the add-on can reject
+# unauthenticated callers on the hassio network. Absent (add-on not updated / not yet mapped) →
+# no header → the add-on's observe mode allows it, so this is back/forward compatible.
+_BRIDGE_HEADER = "X-Dashie-Bridge-Secret"
+_BRIDGE_SECRET_REL = "addon_configs/dashie/bridge_secret"
+_bridge_secret: str | None = None
 
 # Fallback addresses if Supervisor discovery is unavailable.
 # TODO(config): also allow a config_flow override.
@@ -114,6 +126,28 @@ async def _discover_via_supervisor(session) -> str | None:
         return None
 
 
+async def _bridge_headers(hass: HomeAssistant) -> dict:
+    """Auth header for /api/internal/* calls, or {} when the secret isn't provisioned yet
+    (add-on not updated / addon_config not mapped) — the add-on's observe mode then allows it."""
+    global _bridge_secret
+    if _bridge_secret:
+        return {_BRIDGE_HEADER: _bridge_secret}
+
+    def _read() -> str | None:
+        try:
+            with open(hass.config.path(_BRIDGE_SECRET_REL), encoding="utf-8") as fh:
+                return (fh.read() or "").strip() or None
+        except (FileNotFoundError, OSError):
+            return None
+
+    secret = await hass.async_add_executor_job(_read)
+    if secret:
+        _bridge_secret = secret
+        _LOGGER.info("Bridge secret loaded from addon_config")
+        return {_BRIDGE_HEADER: secret}
+    return {}
+
+
 async def get_account_credential(hass: HomeAssistant) -> str:
     """Return the account JWT used to authenticate brain calls (cached until near expiry).
 
@@ -130,12 +164,13 @@ async def get_account_credential(hass: HomeAssistant) -> str:
 
     session = async_get_clientsession(hass)
     bases = await _resolve_bases(session)
+    headers = await _bridge_headers(hass)
 
     last_err = "no candidates"
     for base in bases:
         url = f"{base}{_CREDENTIAL_PATH}"
         try:
-            async with session.get(url, timeout=_TIMEOUT) as resp:
+            async with session.get(url, headers=headers, timeout=_TIMEOUT) as resp:
                 status = resp.status
                 data = await resp.json(content_type=None) if status == 200 else None
         except Exception as err:  # noqa: BLE001
@@ -176,9 +211,10 @@ async def get_sharing_status(hass: HomeAssistant) -> dict:
     global _working_base
     session = async_get_clientsession(hass)
     bases = await _resolve_bases(session)
+    headers = await _bridge_headers(hass)
     for base in bases:
         try:
-            async with session.get(f"{base}{_SHARING_STATUS_PATH}", timeout=_TIMEOUT) as resp:
+            async with session.get(f"{base}{_SHARING_STATUS_PATH}", headers=headers, timeout=_TIMEOUT) as resp:
                 if resp.status != 200:
                     continue
                 data = await resp.json(content_type=None)
@@ -218,9 +254,10 @@ async def get_voice_config(hass: HomeAssistant) -> dict:
     global _working_base
     session = async_get_clientsession(hass)
     bases = await _resolve_bases(session)
+    headers = await _bridge_headers(hass)
     for base in bases:
         try:
-            async with session.get(f"{base}{_VOICE_CONFIG_PATH}", timeout=_TIMEOUT) as resp:
+            async with session.get(f"{base}{_VOICE_CONFIG_PATH}", headers=headers, timeout=_TIMEOUT) as resp:
                 if resp.status != 200:
                     continue
                 data = await resp.json(content_type=None)
