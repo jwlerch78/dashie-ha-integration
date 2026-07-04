@@ -134,11 +134,18 @@ async def _bridge_headers(hass: HomeAssistant) -> dict:
         return {_BRIDGE_HEADER: _bridge_secret}
 
     def _read() -> str | None:
-        try:
-            with open(hass.config.path(_BRIDGE_SECRET_REL), encoding="utf-8") as fh:
-                return (fh.read() or "").strip() or None
-        except (FileNotFoundError, OSError):
-            return None
+        # HA Core reaches an add-on's addon_config either under its own config dir
+        # (/config/addon_configs/<slug>/) or via a root mount (/addon_configs/<slug>/),
+        # depending on the install — try both.
+        for candidate in (hass.config.path(_BRIDGE_SECRET_REL), "/" + _BRIDGE_SECRET_REL):
+            try:
+                with open(candidate, encoding="utf-8") as fh:
+                    val = (fh.read() or "").strip()
+                    if val:
+                        return val
+            except (FileNotFoundError, OSError):
+                continue
+        return None
 
     secret = await hass.async_add_executor_job(_read)
     if secret:
