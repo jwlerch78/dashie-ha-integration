@@ -76,6 +76,12 @@ class DashieVoiceConverseView(HomeAssistantView):
             "text": text,
             "endpoint_id": endpoint_id,
             "options": options,
+            # This gateway is HEADLESS — it has no device to run a client_tool (weather,
+            # calendar, …). Declaring an empty capability list tells the brain to
+            # self-fulfill server-side where it can (weather → edge Open-Meteo) instead of
+            # handing back an unfulfillable client_tool, so "weather this weekend" answers
+            # instead of dead-ending. A capable caller (the Dashie tablet) omits this field.
+            "client_fulfilled_tools": [],
         }
         for key in ("history", "provided_context", "conversation_id"):
             if body.get(key) is not None:
