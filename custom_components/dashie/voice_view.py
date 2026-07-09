@@ -172,9 +172,20 @@ class DashieVoiceStatusView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.Response:
         hass: HomeAssistant = request.app["hass"]
         status = await get_sharing_status(hass)
+        # Household conversation agent mode (live|dialog|single) — the console's Voice & AI
+        # page writes it to the account; the add-on reads it (voice-config); we forward it so
+        # an anonymous kiosk behaves like the account chose (Live-on-kiosk, 2026-07-09).
+        # Best-effort: '' when the add-on doesn't report one (older add-on / unreachable) —
+        # the tablet then uses its kiosk default.
+        agent_mode = ""
+        try:
+            agent_mode = (await get_voice_config(hass)).get("agent_mode", "") or ""
+        except Exception:  # noqa: BLE001 — never fail the status probe on config
+            agent_mode = ""
         return web.json_response({
             "available": bool(status.get("available")),
             "reason": status.get("reason", "unknown"),
+            "agent_mode": agent_mode,
         })
 
 
