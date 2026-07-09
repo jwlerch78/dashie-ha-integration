@@ -178,15 +178,24 @@ class DashieVoiceStatusView(HomeAssistantView):
         # Best-effort: '' when the add-on doesn't report one (older add-on / unreachable) —
         # the tablet then uses its kiosk default.
         agent_mode = ""
+        retrieve_pictures = None
         try:
-            agent_mode = (await get_voice_config(hass)).get("agent_mode", "") or ""
+            cfg = await get_voice_config(hass)
+            agent_mode = cfg.get("agent_mode", "") or ""
+            # ai.retrievePicturesEnabled (relay image_search gate) — forwarded only when
+            # the add-on reports a boolean; older add-ons omit it.
+            if isinstance(cfg.get("retrieve_pictures"), bool):
+                retrieve_pictures = cfg["retrieve_pictures"]
         except Exception:  # noqa: BLE001 — never fail the status probe on config
             agent_mode = ""
-        return web.json_response({
+        body = {
             "available": bool(status.get("available")),
             "reason": status.get("reason", "unknown"),
             "agent_mode": agent_mode,
-        })
+        }
+        if retrieve_pictures is not None:
+            body["retrieve_pictures"] = retrieve_pictures
+        return web.json_response(body)
 
 
 class DashieVoiceSessionView(HomeAssistantView):
