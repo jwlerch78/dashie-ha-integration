@@ -82,48 +82,75 @@ class SharingDisabled(AddonUnavailable):
 
 async def _resolve_bases(session) -> list[str]:
     """Candidate add-on base URLs: the cached working one, else Supervisor
-    discovery + the fallback hostnames."""
+    discovery (dev-first) + the fallback hostnames."""
     if _working_base:
         return [_working_base]
     bases: list[str] = []
-    discovered = await _discover_via_supervisor(session)
-    if discovered:
-        bases.append(discovered)
+    bases.extend(await _discover_via_supervisor(session))
     bases.extend(_ADDON_CANDIDATES)
     return bases
 
 
-async def _discover_via_supervisor(session) -> str | None:
-    """Resolve the add-on's base URL (http://<ip>:8099) via the Supervisor API."""
+def _is_dashie_addon(a: dict) -> bool:
+    """A Dashie Console add-on of either channel. Repo-install slugs are
+    `<repo>_dashie` (prod) / `<repo>_dashie_dev` (dev); names "Dashie Console"
+    and "Dashie Console (Dev)"."""
+    slug = a.get("slug") or ""
+    name = a.get("name") or ""
+    return (
+        slug == "dashie"
+        or slug.endswith("_dashie")
+        or slug.endswith("dashie_dev")
+        or name.startswith("Dashie Console")
+    )
+
+
+def _is_dev_addon(a: dict) -> bool:
+    return (a.get("slug") or "").endswith("dashie_dev") or "(Dev)" in (a.get("name") or "")
+
+
+async def _discover_via_supervisor(session) -> list[str]:
+    """Resolve Dashie add-on base URLs (http://<ip>:8099) via the Supervisor API.
+
+    Returns ALL installed Dashie add-ons, **dev channel first** — a dev box runs
+    both channels and the developer signs into the dev add-on, so the integration
+    must prefer it; a field box has only prod, so prod is picked. The caller uses
+    the first base that actually answers (and caches it). Empty list when none
+    found or no Supervisor token.
+    """
     if not SUPERVISOR_TOKEN:
         _LOGGER.debug("no SUPERVISOR_TOKEN — skipping add-on discovery")
-        return None
+        return []
     headers = {"Authorization": f"Bearer {SUPERVISOR_TOKEN}"}
     try:
         async with session.get(f"{SUPERVISOR_URL}/addons", headers=headers, timeout=_TIMEOUT) as resp:
             if resp.status != 200:
                 _LOGGER.debug("supervisor /addons HTTP %s", resp.status)
-                return None
+                return []
             addons = ((await resp.json()).get("data") or {}).get("addons") or []
-        slug = next(
-            (a.get("slug") for a in addons
-             if a.get("slug") == "dashie"
-             or (a.get("slug") or "").endswith("_dashie")
-             or a.get("name") == "Dashie Console"),
-            None,
-        )
-        if not slug:
+        matches = [a for a in addons if _is_dashie_addon(a)]
+        if not matches:
             _LOGGER.debug("dashie add-on not found in supervisor list")
-            return None
-        async with session.get(f"{SUPERVISOR_URL}/addons/{slug}/info", headers=headers, timeout=_TIMEOUT) as resp:
-            if resp.status != 200:
-                return None
-            info = (await resp.json()).get("data") or {}
-        host = info.get("ip_address") or info.get("hostname")
-        return f"http://{host}:{ADDON_PORT}" if host else None
+            return []
+        # Dev first (developer intent), then prod.
+        matches.sort(key=lambda a: 0 if _is_dev_addon(a) else 1)
+        bases: list[str] = []
+        for a in matches:
+            slug = a.get("slug")
+            try:
+                async with session.get(f"{SUPERVISOR_URL}/addons/{slug}/info", headers=headers, timeout=_TIMEOUT) as resp:
+                    if resp.status != 200:
+                        continue
+                    info = (await resp.json()).get("data") or {}
+            except Exception:  # noqa: BLE001
+                continue
+            host = info.get("ip_address") or info.get("hostname")
+            if host:
+                bases.append(f"http://{host}:{ADDON_PORT}")
+        return bases
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("supervisor discovery failed: %s", err)
-        return None
+        return []
 
 
 async def _bridge_headers(hass: HomeAssistant) -> dict:
