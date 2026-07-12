@@ -19,6 +19,7 @@ TTS in the gateway (v1 returns text; the tablet speaks it natively).
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from aiohttp import web
@@ -116,25 +117,68 @@ class DashieVoiceConverseView(HomeAssistantView):
         except AddonUnavailable as err:
             return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
 
+        brain_headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {cred}",
+            "apikey": cred,
+        }
         session = async_get_clientsession(hass)
-        try:
-            async with session.post(
-                BRAIN_URL,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {cred}",
-                    "apikey": cred,
-                },
-            ) as resp:
-                turn = await resp.json(content_type=None)
-                status = 200 if resp.status < 400 else resp.status
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("voice converse → brain failed: %s", err)
-            return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502)
 
-        await self._maybe_retain(hass, turn, text, endpoint_id, payload)
-        return web.json_response(turn, status=status)
+        # COMPAT: only proxy the NDJSON progress stream when the CLIENT asked for it
+        # (`body.stream` — the streaming-aware tablet APK). An older APK does a plain-JSON
+        # parse and would choke on NDJSON, so it keeps the buffered single-turn path.
+        if not body.get("stream"):
+            try:
+                async with session.post(BRAIN_URL, json=payload, headers=brain_headers) as resp:
+                    turn = await resp.json(content_type=None)
+                    status = 200 if resp.status < 400 else resp.status
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("voice converse → brain failed: %s", err)
+                return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502)
+            await self._maybe_retain(hass, turn, text, endpoint_id, payload)
+            return web.json_response(turn, status=status)
+
+        # STREAM the brain's NDJSON straight through so the kiosk shows live progress
+        # (thinking → "Searching the web…" → "Finalizing…") — one JSON object per line:
+        # {kind:'stage',…} events, then {kind:'final',turn}. Forward each line as it arrives
+        # and capture the final turn for caller-side transcript retention.
+        payload["stream"] = True
+        downstream = web.StreamResponse(
+            headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-cache"}
+        )
+        prepared = False
+        final_turn = None
+        try:
+            async with session.post(BRAIN_URL, json=payload, headers=brain_headers) as resp:
+                if resp.status >= 400:
+                    # Error before any stream — relay it as a plain JSON body, not a stream.
+                    err_body = await resp.text()
+                    return web.Response(status=resp.status, text=err_body, content_type="application/json")
+                await downstream.prepare(request)
+                prepared = True
+                async for raw in resp.content:  # NDJSON is line-delimited
+                    if not raw.strip():
+                        continue
+                    await downstream.write(raw if raw.endswith(b"\n") else raw + b"\n")
+                    try:
+                        obj = json.loads(raw)
+                        if obj.get("kind") == "final":
+                            final_turn = obj.get("turn")
+                    except Exception:  # noqa: BLE001 — a partial/odd line just isn't the final turn
+                        pass
+            await downstream.write_eof()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("voice converse → brain stream failed: %s", err)
+            if not prepared:
+                return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502)
+            try:
+                await downstream.write_eof()
+            except Exception:  # noqa: BLE001
+                pass
+
+        if final_turn is not None:
+            await self._maybe_retain(hass, final_turn, text, endpoint_id, payload)
+        return downstream
 
     @staticmethod
     async def _maybe_retain(hass, turn, text, endpoint_id, payload) -> None:
