@@ -225,6 +225,9 @@ class DashieVoiceStatusView(HomeAssistantView):
         retrieve_pictures = None
         brain_route = ""
         brain_route_reason = ""
+        # WS-G account defaults + full voice pipeline mirror (kiosk Phase 1) — carried so a
+        # share-account anon kiosk reflects the household's Voice & AI setup, not just agentMode.
+        cfg: dict = {}
         try:
             cfg = await get_voice_config(hass)
             agent_mode = cfg.get("agent_mode", "") or ""
@@ -242,6 +245,7 @@ class DashieVoiceStatusView(HomeAssistantView):
                 brain_route_reason = cfg.get("route_reason", "") or ""
         except Exception:  # noqa: BLE001 — never fail the status probe on config
             agent_mode = ""
+            cfg = {}
         body = {
             "available": bool(status.get("available")),
             "reason": status.get("reason", "unknown"),
@@ -252,6 +256,26 @@ class DashieVoiceStatusView(HomeAssistantView):
         if brain_route:
             body["brain_route"] = brain_route
             body["brain_route_reason"] = brain_route_reason
+        # WS-G defaults (personality/voice/wake word) — forwarded as-is; the native
+        # anon-kiosk resolver applies them. Only included when non-empty so an older
+        # add-on that omits them leaves the kiosk's current value alone.
+        for src_key, out_key in (
+            ("default_personality_id", "default_personality_id"),
+            ("default_voice_key", "default_voice_key"),
+            ("default_wake_word", "default_wake_word"),
+        ):
+            val = cfg.get(src_key)
+            if isinstance(val, str) and val:
+                body[out_key] = val
+        # Full voice pipeline block (STT/TTS providers + HA engine ids + voice + model +
+        # search source + preset) — the account's Voice & AI setup mirrored to the kiosk.
+        pipeline = cfg.get("pipeline")
+        if isinstance(pipeline, dict) and pipeline:
+            body["pipeline"] = pipeline
+        # ai.model rides alongside the pipeline (the kiosk's brain model mirrors the account).
+        model = cfg.get("model")
+        if isinstance(model, str) and model:
+            body["model"] = model
         return web.json_response(body)
 
 
