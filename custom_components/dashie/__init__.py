@@ -27,6 +27,7 @@ from .const import (
     API_SET_VOLUME,
 )
 from .const import CONF_DEVICE_ID
+from . import addon_bridge
 from .coordinator import DashieCoordinator
 from .feed_registry import FeedRegistry, register_feed_registry_views
 from .feed_discovery import register_feed_discovery_views
@@ -436,7 +437,14 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         account's voice settings change). Each device re-probes
         /api/dashie/voice/status and hard-applies the account's voice pipeline — so a
         share-account kiosk updates with no voice command, settings visit, or reboot.
+
+        ALSO drops our cached account credential — the add-on fires this on sign-in and
+        sign-out, and the credential cache is the thing that has to move first: on a cache hit
+        we never re-ask the add-on, so a swapped account otherwise kept vending the PREVIOUS
+        account's JWT until it expired (72h). Telling the kiosks to re-probe while we still
+        hand out the old credential would just re-mint the stale identity.
         """
+        addon_bridge.clear_credential_cache()
         # "refreshVoiceConfig" matches the DashieApiServer cmd on the device's 2323 API.
         for coordinator in _get_all_coordinators():
             await coordinator.send_command("refreshVoiceConfig")

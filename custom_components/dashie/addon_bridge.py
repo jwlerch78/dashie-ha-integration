@@ -60,8 +60,20 @@ _TIMEOUT = ClientTimeout(total=5)
 # the 5s control timeout. Build plan §13.10 measured ~10s cold on a Mac 7B.
 _BRAIN_TIMEOUT = ClientTimeout(total=60)
 
-_cache: dict = {"jwt": None, "exp": 0.0}
+_cache: dict = {"jwt": None, "exp": 0.0, "user_id": None}
 _working_base: str | None = None
+
+# Bound how long a cached account credential may outlive an ACCOUNT SWAP on the box.
+# The JWT itself lives 72h, and the cache-hit path never re-asks the add-on — so before this
+# cap, signing the add-on into a different account left the integration vending the PREVIOUS
+# account's JWT for up to three days. On 2026-07-13 that had a kiosk minting voice tokens for
+# a DELETED account: every turn failed the credit gate, and the user was told they were "out
+# of voice credits" while their live account held $2. The add-on now PUSHES
+# dashie.refresh_voice_config on sign-in/sign-out (→ clear_credential_cache below), which
+# makes a swap take effect immediately; this cap is the belt-and-braces for a missed push
+# (add-on older than 0.1.216, HA restarting, service call dropped). Cost of the cap: at most
+# one localhost round-trip to the add-on every 5 minutes.
+_CREDENTIAL_TTL = 300.0
 
 # FB5: bound how often we re-probe household-sharing (revocation latency vs per-call cost).
 _SHARING_TTL = 30.0
@@ -226,13 +238,40 @@ async def get_account_credential(hass: HomeAssistant) -> str:
             continue
 
         _working_base = base
+        user_id = (data or {}).get("user_id")
+        if _cache["user_id"] and user_id and user_id != _cache["user_id"]:
+            _LOGGER.info(
+                "Account credential switched accounts (%s → %s)",
+                _cache["user_id"], user_id,
+            )
         _cache["jwt"] = jwt
-        _cache["exp"] = _parse_expiry(data.get("jwt_expires_at"), now)
+        _cache["user_id"] = user_id
+        # Cap the cache lifetime — see _CREDENTIAL_TTL. The JWT's own expiry still wins when
+        # it is SOONER (a nearly-expired token must not be handed out).
+        _cache["exp"] = min(
+            _parse_expiry(data.get("jwt_expires_at"), now),
+            now + _CREDENTIAL_TTL + _REFRESH_SKEW,
+        )
         _LOGGER.info("Account credential fetched from add-on at %s", base)
         return jwt
 
     _working_base = None
     raise AddonUnavailable(last_err)
+
+
+def clear_credential_cache() -> None:
+    """Drop the cached account credential so the next call re-asks the add-on.
+
+    Called by the `dashie.refresh_voice_config` service, which the add-on fires on sign-in and
+    sign-out. Without this, an account swap on the box left us vending the OLD account's JWT
+    until it expired (72h) — see _CREDENTIAL_TTL for what that cost.
+    """
+    if _cache["jwt"]:
+        _LOGGER.info("Account credential cache cleared (account change or explicit refresh)")
+    _cache["jwt"] = None
+    _cache["exp"] = 0.0
+    _cache["user_id"] = None
+    _sharing_cache["exp"] = 0.0   # re-probe sharing too — it's account-scoped.
 
 
 async def get_sharing_status(hass: HomeAssistant) -> dict:
