@@ -39,6 +39,7 @@ from .hidden_speakers_store import HiddenSpeakersStore, register_hidden_speakers
 from .sensor_push import register_sensor_push_views
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .device_name_views import register_device_name_views
+from .exposed_entities_view import register_exposed_entities_views
 from .voice_view import register_voice_views
 from .transcript_store import TranscriptStore, register_transcript_views
 from .stream_proxy import register_stream_proxy_views
@@ -296,6 +297,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_device_name_views(hass)
         _device_name_registered = True
         _LOGGER.info("Registered Dashie device name views")
+
+    if not getattr(register_exposed_entities_views, '_registered', False):
+        register_exposed_entities_views(hass)
+        register_exposed_entities_views._registered = True
+        _LOGGER.info("Registered Dashie exposed-entities view")
 
     if not _frigate_proxy_registered:
         register_frigate_proxy_views(hass)
