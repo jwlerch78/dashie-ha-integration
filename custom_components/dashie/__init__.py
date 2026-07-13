@@ -423,6 +423,18 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             for coordinator in _get_all_coordinators():
                 await coordinator.send_command(command)
 
+    async def async_refresh_voice_config(call: ServiceCall) -> None:
+        """Push a voice-config refresh to Dashie devices (anon-kiosk mirror).
+
+        Fired by the add-on when household Dashie Cloud sharing is toggled (or the
+        account's voice settings change). Each device re-probes
+        /api/dashie/voice/status and hard-applies the account's voice pipeline — so a
+        share-account kiosk updates with no voice command, settings visit, or reboot.
+        """
+        # "refreshVoiceConfig" matches the DashieApiServer cmd on the device's 2323 API.
+        for coordinator in _get_all_coordinators():
+            await coordinator.send_command("refreshVoiceConfig")
+
     async def async_load_url(call: ServiceCall) -> None:
         """Load a URL on a device."""
         url = call.data["url"]
@@ -826,6 +838,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
     # Register all services
     hass.services.async_register(DOMAIN, SERVICE_SEND_COMMAND, async_send_command)
+    hass.services.async_register(DOMAIN, "refresh_voice_config", async_refresh_voice_config)
     hass.services.async_register(DOMAIN, SERVICE_LOAD_URL, async_load_url)
     hass.services.async_register(DOMAIN, SERVICE_SPEAK, async_speak)
     hass.services.async_register(DOMAIN, SERVICE_SET_BRIGHTNESS, async_set_brightness)
