@@ -223,6 +223,8 @@ class DashieVoiceStatusView(HomeAssistantView):
         # the tablet then uses its kiosk default.
         agent_mode = ""
         retrieve_pictures = None
+        brain_route = ""
+        brain_route_reason = ""
         try:
             cfg = await get_voice_config(hass)
             agent_mode = cfg.get("agent_mode", "") or ""
@@ -230,6 +232,14 @@ class DashieVoiceStatusView(HomeAssistantView):
             # the add-on reports a boolean; older add-ons omit it.
             if isinstance(cfg.get("retrieve_pictures"), bool):
                 retrieve_pictures = cfg["retrieve_pictures"]
+            # Where the account's BRAIN runs (Open Brain §5): 'local' when the add-on serves
+            # it (own model / Hermes / BYO provider key on the box), 'cloud' for the metered
+            # edge fn. A logged-in device reads this to send cascade turns through this
+            # gateway instead of direct-to-cloud. '' when the add-on doesn't report one
+            # (older add-on) — the device then keeps its default (direct cloud).
+            if cfg.get("route") in ("local", "cloud"):
+                brain_route = cfg["route"]
+                brain_route_reason = cfg.get("route_reason", "") or ""
         except Exception:  # noqa: BLE001 — never fail the status probe on config
             agent_mode = ""
         body = {
@@ -239,6 +249,9 @@ class DashieVoiceStatusView(HomeAssistantView):
         }
         if retrieve_pictures is not None:
             body["retrieve_pictures"] = retrieve_pictures
+        if brain_route:
+            body["brain_route"] = brain_route
+            body["brain_route_reason"] = brain_route_reason
         return web.json_response(body)
 
 
