@@ -251,6 +251,12 @@ class DashieVoiceStatusView(HomeAssistantView):
             "reason": status.get("reason", "unknown"),
             "agent_mode": agent_mode,
         }
+        # Account identity for the anon-kiosk "Authorized by <email>" display —
+        # household-sharing-driven. The add-on only vends account_email when sharing
+        # is available, so forward it as-is when present (absent → kiosk shows nothing).
+        account_email = status.get("account_email")
+        if isinstance(account_email, str) and account_email:
+            body["account_email"] = account_email
         if retrieve_pictures is not None:
             body["retrieve_pictures"] = retrieve_pictures
         if brain_route:
