@@ -35,6 +35,7 @@ ADDON_PORT = 8099
 _CREDENTIAL_PATH = "/api/internal/account-credential"
 _SHARING_STATUS_PATH = "/api/internal/sharing-status"
 _VOICE_CONFIG_PATH = "/api/internal/voice-config"
+_AUTHORIZE_DEVICE_PATH = "/api/internal/authorize-device"
 # On-prem brain (local model, runs IN the add-on — build plan §13.16/§13.17).
 _CONVERSE_LOCAL_PATH = "/api/voice/converse-local"
 
@@ -339,6 +340,45 @@ async def get_voice_config(hass: HomeAssistant) -> dict:
         _working_base = base
         return data or {"route": "cloud"}
     return {"route": "cloud"}
+
+
+async def authorize_device(hass: HomeAssistant, user_code: str) -> tuple[dict, int]:
+    """Ask the add-on to authorize a pending kiosk device code into the household account.
+
+    Kiosk Real Login, Phase 1. A LAN tablet has created a device code and wants a REAL account
+    session instead of the anonymous-kiosk mirror. The add-on holds the account JWT, so it calls
+    jwt-auth's `authorize_device_code_account` on the tablet's behalf; the TABLET then polls
+    jwt-auth directly for its own per-device JWT.
+
+    No credential passes through here — we return only success/failure. The add-on gates on
+    household sharing, and jwt-auth re-checks it server-side (the authoritative gate) and
+    restricts the operation to `device_type='ha_kiosk'`.
+
+    Returns (body, status). Never raises — the caller surfaces the status to the tablet.
+    """
+    global _working_base
+    session = async_get_clientsession(hass)
+    bases = await _resolve_bases(session)
+    headers = await _bridge_headers(hass)
+
+    last_err = "no candidates"
+    for base in bases:
+        try:
+            async with session.post(
+                f"{base}{_AUTHORIZE_DEVICE_PATH}",
+                json={"user_code": user_code},
+                headers=headers,
+                timeout=_TIMEOUT,
+            ) as resp:
+                status = resp.status
+                body = await resp.json(content_type=None)
+        except Exception as e:  # noqa: BLE001
+            last_err = str(e)
+            continue
+        _working_base = base
+        return (body or {}, status)
+
+    return ({"error": "addon_unavailable", "message": f"Dashie add-on unreachable: {last_err}"}, 503)
 
 
 async def converse_local(hass: HomeAssistant, payload: dict) -> tuple[dict, int]:

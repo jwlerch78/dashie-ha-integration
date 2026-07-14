@@ -31,6 +31,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .addon_bridge import (
     AddonUnavailable,
     SharingDisabled,
+    authorize_device,
     converse_local,
     get_account_credential,
     get_sharing_status,
@@ -343,9 +344,67 @@ class DashieVoiceSessionView(HomeAssistantView):
         return web.json_response(bundle, status=200)
 
 
+class DashieAccountAuthorizeView(HomeAssistantView):
+    """Authorize a LAN kiosk tablet into the household Dashie account (Kiosk Real Login, Phase 1).
+
+    The tablet creates a device code with Dashie's cloud (`create_device_code`,
+    device_type='ha_kiosk'), then POSTs the resulting user_code here. This box — which is signed
+    into the household account via the add-on — authorizes that code for its own account. The
+    tablet then polls Dashie's cloud directly for its own per-device JWT.
+
+    **No credential is returned by this view.** The account JWT never leaves the add-on, and the
+    tablet's session token comes from its own poll — so nothing here can leak either one.
+
+    Authed by the HA token the tablet already holds (`requires_auth`), which is what makes this
+    LAN-scoped: only a device that HA already trusts can even ask. Gated end-to-end on household
+    sharing (add-on checks, and jwt-auth re-checks authoritatively), and jwt-auth restricts the
+    operation to `device_type='ha_kiosk'` so this cannot sign a Fire TV or a phone into the
+    account.
+
+    Why this exists: the anon-kiosk voice MIRROR (hand-plumbing account state across 5 hops) is
+    being retired. A logged-in kiosk gets calendars/chores/photos/settings through the ordinary
+    account paths — O(1) instead of O(features).
+    """
+
+    url = "/api/dashie/account/authorize"
+    name = "api:dashie:account:authorize"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+
+        user_code = (body or {}).get("user_code") or (body or {}).get("device_code") or ""
+        if not user_code:
+            return web.json_response({"ok": False, "error": "missing_user_code"}, status=400)
+
+        result, status = await authorize_device(hass, user_code)
+        if status == 200 and result.get("success"):
+            _LOGGER.info("Kiosk device code authorized into the household account")
+            return web.json_response(
+                {"ok": True, "account_email": result.get("account_email")}, status=200
+            )
+
+        _LOGGER.warning(
+            "Kiosk authorize refused (%s): %s", status, result.get("error", "unknown")
+        )
+        return web.json_response(
+            {
+                "ok": False,
+                "error": result.get("error", "authorize_failed"),
+                "message": result.get("message", "Could not authorize this device."),
+            },
+            status=status if status >= 400 else 400,
+        )
+
+
 def register_voice_views(hass: HomeAssistant) -> None:
     """Register Dashie voice gateway HTTP views."""
     hass.http.register_view(DashieVoiceConverseView())
     hass.http.register_view(DashieVoiceStatusView())
     hass.http.register_view(DashieVoiceSessionView())
+    hass.http.register_view(DashieAccountAuthorizeView())
     _LOGGER.info("Registered Dashie voice gateway views")
