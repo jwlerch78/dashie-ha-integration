@@ -119,6 +119,32 @@ def _lovelace_dashboards(hass: HomeAssistant):
     return data if isinstance(data, dict) else {}
 
 
+def _url_path_from_start_url(start_url: str):
+    """Parse a Lovelace dashboard url_path out of a device's startUrl. HA dashboard URLs are
+    <base>/<url_path>/<view> for a named dashboard or <base>/lovelace/<view> for the default.
+    Returns the url_path, or None for the default dashboard (which the config map keys under None)."""
+    if not start_url:
+        return None
+    from urllib.parse import urlparse
+
+    path = urlparse(start_url).path if "://" in start_url else start_url
+    segs = [s for s in path.split("/") if s]
+    if not segs or segs[0] == "lovelace":
+        return None
+    return segs[0]
+
+
+def _start_url_for_device(hass: HomeAssistant, device_id: str):
+    """The startUrl (dashboard the device loads) for a Dashie device, from its coordinator."""
+    from .const import DOMAIN
+
+    for coord in hass.data.get(DOMAIN, {}).values():
+        if getattr(coord, "device_id", None) == device_id:
+            data = getattr(coord, "data", None) or {}
+            return data.get("startUrl", "")
+    return ""
+
+
 class DashieDashboardEntitiesView(HomeAssistantView):
     """Return the entity IDs referenced by a Lovelace dashboard (the plug-and-play voice inclusion
     list — "what's on my screen is controllable"). The tablet passes the `url_path` of the dashboard
@@ -133,7 +159,12 @@ class DashieDashboardEntitiesView(HomeAssistantView):
 
     async def get(self, request: web.Request) -> web.Response:
         hass: HomeAssistant = request.app["hass"]
+        # Prefer an explicit url_path; else resolve the DEVICE's dashboard from its startUrl (keyed
+        # by StableDeviceId, like /device/area). Either way we end at a Lovelace url_path.
         url_path = request.query.get("url_path", "").strip() or None
+        device_id = request.query.get("device_id", "").strip()
+        if url_path is None and device_id:
+            url_path = _url_path_from_start_url(_start_url_for_device(hass, device_id))
 
         dashboards = _lovelace_dashboards(hass)
         board = dashboards.get(url_path)
