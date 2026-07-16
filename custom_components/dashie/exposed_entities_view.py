@@ -87,7 +87,90 @@ class DashieExposedEntitiesView(HomeAssistantView):
         )
 
 
+# Lovelace card fields that reference entities. Kept small + explicit — the common cards use these;
+# a recursive walk over the whole config catches nested stacks/grids too.
+def _walk_entities(obj, out):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in ("entity", "entity_id") and isinstance(v, str) and "." in v:
+                out.add(v)
+            elif k == "entities" and isinstance(v, list):
+                for e in v:
+                    if isinstance(e, str) and "." in e:
+                        out.add(e)
+                    elif isinstance(e, dict):
+                        _walk_entities(e, out)
+            else:
+                _walk_entities(v, out)
+    elif isinstance(obj, list):
+        for x in obj:
+            _walk_entities(x, out)
+
+
+def _lovelace_dashboards(hass: HomeAssistant):
+    """The url_path → LovelaceConfig map, across HA-version shapes of hass.data['lovelace'].
+    Newer HA: a LovelaceData dataclass with `.dashboards`; older: a plain dict."""
+    data = hass.data.get("lovelace")
+    if data is None:
+        return {}
+    dashboards = getattr(data, "dashboards", None)
+    if dashboards is not None:
+        return dashboards
+    return data if isinstance(data, dict) else {}
+
+
+class DashieDashboardEntitiesView(HomeAssistantView):
+    """Return the entity IDs referenced by a Lovelace dashboard (the plug-and-play voice inclusion
+    list — "what's on my screen is controllable"). The tablet passes the `url_path` of the dashboard
+    it displays; default (omitted) = HA's default dashboard. In-process access to hass.data['lovelace']
+    bypasses the REST /api/lovelace/config 404. Additive; returns the same {entity_ids, areas} shape
+    as exposed_entities so the caller treats both sources identically. Room-awareness build 20260715.
+    """
+
+    url = "/api/dashie/dashboard_entities"
+    name = "api:dashie:dashboard_entities"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        url_path = request.query.get("url_path", "").strip() or None
+
+        dashboards = _lovelace_dashboards(hass)
+        board = dashboards.get(url_path)
+        if board is None:
+            return web.json_response(
+                {"entity_ids": [], "count": 0, "areas": {}, "error": "dashboard_not_found", "url_path": url_path}
+            )
+
+        try:
+            config = await board.async_load(False)
+        except Exception as err:  # noqa: BLE001 — any load failure → empty, never 500 the picker
+            _LOGGER.debug("dashboard_entities: async_load failed for %s: %s", url_path, err)
+            return web.json_response(
+                {"entity_ids": [], "count": 0, "areas": {}, "error": "config_load_failed", "url_path": url_path}
+            )
+
+        found: set[str] = set()
+        _walk_entities(config or {}, found)
+        # Only entities that actually exist as states (drop stale/removed refs and non-entity dotted
+        # strings that slipped through), then attach areas via the shared resolver.
+        entity_ids = [e for e in sorted(found) if hass.states.get(e) is not None]
+        ent_reg = er.async_get(hass)
+        dev_reg = dr.async_get(hass)
+        area_reg = ar.async_get(hass)
+        areas = {}
+        for entity_id in entity_ids:
+            name = _area_name_for(entity_id, ent_reg, dev_reg, area_reg)
+            if name:
+                areas[entity_id] = name
+
+        return web.json_response(
+            {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas, "url_path": url_path}
+        )
+
+
 def register_exposed_entities_views(hass: HomeAssistant) -> None:
-    """Register the exposed-entities HTTP view."""
+    """Register the exposed-entities HTTP views."""
     hass.http.register_view(DashieExposedEntitiesView())
-    _LOGGER.info("Registered Dashie exposed-entities view")
+    hass.http.register_view(DashieDashboardEntitiesView())
+    _LOGGER.info("Registered Dashie exposed-entities + dashboard-entities views")
