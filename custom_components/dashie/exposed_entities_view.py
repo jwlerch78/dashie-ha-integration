@@ -12,7 +12,13 @@ through the same proxy it uses for /api/states.
 
 HTTP endpoint:
   GET /api/dashie/exposed_entities
-    → { "entity_ids": ["cover.garage_door", ...], "count": N }
+    → { "entity_ids": ["cover.garage_door", ...], "count": N, "areas": {...},
+        "entities": [{entity_id, domain, friendly_name, state, area?, aliases?}, ...] }
+
+`entities` is the ENRICHED brain-shaped list (+ aliases from the HA expose UI) — the single source
+both the voice brain and the on-device fast-path read. See
+.reference/build-plans/20260717_HA_ENTITY_EXPOSURE_CONTRACT.md. `entity_ids`/`areas` kept for
+back-compat. Same shape is returned by /api/dashie/dashboard_entities.
 """
 from __future__ import annotations
 
@@ -54,6 +60,35 @@ def _area_name_for(entity_id, ent_reg, dev_reg, area_reg):
     return area.name if area is not None else None
 
 
+def _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg):
+    """Brain-shaped entity objects for a set of ids — the SINGLE enriched list the voice brain and
+    the on-device fast-path both read (see .reference/build-plans/20260717_HA_ENTITY_EXPOSURE_CONTRACT.md).
+
+    Shape: {entity_id, domain, friendly_name, state, area?, aliases?} — identical to JS
+    entitiesForBrain() output, PLUS `aliases` (the HA "Expose to Assist" Aliases column, from the
+    entity registry). `area`/`aliases` are omitted when empty. Ids with no current state are skipped
+    (stale/removed refs)."""
+    out = []
+    for entity_id in entity_ids:
+        st = hass.states.get(entity_id)
+        if st is None:
+            continue
+        ent = {
+            "entity_id": entity_id,
+            "domain": entity_id.split(".")[0],
+            "friendly_name": st.attributes.get("friendly_name") or "",
+            "state": st.state,
+        }
+        area = _area_name_for(entity_id, ent_reg, dev_reg, area_reg)
+        if area:
+            ent["area"] = area
+        reg = ent_reg.async_get(entity_id)
+        if reg is not None and reg.aliases:
+            ent["aliases"] = sorted(reg.aliases)
+        out.append(ent)
+    return out
+
+
 class DashieExposedEntitiesView(HomeAssistantView):
     """Return the entity IDs exposed to HA's conversation assistant."""
 
@@ -82,8 +117,9 @@ class DashieExposedEntitiesView(HomeAssistantView):
             if name:
                 areas[entity_id] = name
 
+        entities = _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg)
         return web.json_response(
-            {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas}
+            {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas, "entities": entities}
         )
 
 
@@ -195,8 +231,10 @@ class DashieDashboardEntitiesView(HomeAssistantView):
             if name:
                 areas[entity_id] = name
 
+        entities = _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg)
         return web.json_response(
-            {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas, "url_path": url_path}
+            {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas,
+             "entities": entities, "url_path": url_path}
         )
 
 
