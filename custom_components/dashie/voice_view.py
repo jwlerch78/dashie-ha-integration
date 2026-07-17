@@ -48,6 +48,91 @@ BRAIN_URL = "https://cwglbtosingboqepsmjk.supabase.co/functions/v1/voice-convers
 # TODO(config): derive per-environment alongside BRAIN_URL.
 ISSUE_STT_TOKEN_URL = "https://cwglbtosingboqepsmjk.supabase.co/functions/v1/issue-stt-token"
 
+# ── The gateway↔VoiceRequest contract (JS_KOTLIN_CONTRACTS #30) ────────────────────────
+# The brain's request contract is `voice-conversation/types.ts VoiceRequest`. It GROWS, and
+# this gateway is not its author — so the payload builder below FORWARDS THE CALLER'S BODY
+# WHOLESALE and overrides only the keys named here. A new contract field reaches the brain
+# by default instead of vanishing.
+#
+# This inverts a hand-maintained allowlist that silently dropped anything not on it — no
+# error, no log, the brain just got less and read as a model quirk. It was written for ONE
+# headless HA voice satellite; then "My Local LLM" (ai.model='local') routed EVERY endpoint
+# through here, including the logged-in tablet, and nobody re-read the payload builder. Three
+# fields were found dead by inspection (client_fulfilled_tools erased to [], timezone →
+# UTC "today" + timeless sports answers, announcement → a fired scheduled action could
+# re-schedule itself). Finding them by reading is not a strategy; the default is now
+# pass-through, so omission is impossible by construction.
+# Root cause + the full instance list: dashieapp_staging
+# `.reference/build-plans/20260716_HA_GATEWAY_PAYLOAD_ALLOWLIST_ROT.md`.
+
+#: VoiceRequest keys the GATEWAY computes and a caller therefore may not dictate. Everything
+#: else in the body is caller-owned and passes straight through. `npm run lint:gateway-payload`
+#: (dashieapp_staging) asserts every name here is still a real VoiceRequest field — a rename in
+#: types.ts would otherwise turn an override into a dead key written alongside the real one.
+GATEWAY_OWNED_KEYS = frozenset({"endpoint_id", "options", "client_fulfilled_tools"})
+
+#: `options` keys that are GATEWAY-INTERNAL — read here, never sent on. `route` selects
+#: cloud-vs-on-prem brain in THIS view (build plan §13.17); it is not a brain field, and the
+#: lint asserts types.ts never declares one, which would make stripping it a contract break.
+GATEWAY_INTERNAL_OPTION_KEYS = frozenset({"route"})
+
+#: Transcript retention the gateway pins for EVERY caller (build plan §17). Deliberately not
+#: caller-overridable: 'server' would move family speech into Supabase. See §6 of the handoff.
+GATEWAY_RETAIN_MODE = "caller"
+
+
+def build_brain_payload(body: dict) -> tuple[dict, str, str | None]:
+    """Build the brain payload from a caller's request body.
+
+    Pure (no I/O, no hass) so it is unit-testable — see the integration's
+    `tests/test_voice_payload.py`, which asserts the pass-through property itself: an
+    unknown//future/ VoiceRequest field must survive. That test fails the moment someone
+    reintroduces an allowlist, which is the regression this whole design exists to prevent.
+
+    Returns `(payload, endpoint_id, route)`. `route` is popped from `options` — it is
+    gateway-internal (cloud vs on-prem), and the caller of this function acts on it.
+    """
+    payload = dict(body or {})
+
+    # Gateway-owned: a caller may SUGGEST an endpoint_id; absent → the headless satellite id.
+    endpoint_id = payload.get("endpoint_id") or "ha-voice"
+    payload["endpoint_id"] = endpoint_id
+
+    # Gateway-owned: retain_mode is pinned AFTER copying the caller's options, so a caller
+    # cannot ask the brain to persist its transcript (§17). A non-dict `options` is treated
+    # as absent rather than raising — this is an unauthenticated-ish LAN surface.
+    raw_options = payload.get("options")
+    options = dict(raw_options) if isinstance(raw_options, dict) else {}
+    route = options.get("route")
+    for key in GATEWAY_INTERNAL_OPTION_KEYS:
+        options.pop(key, None)
+    options["retain_mode"] = GATEWAY_RETAIN_MODE
+    payload["options"] = options
+
+    # Gateway-owned: HONOUR WHAT THE CALLER DECLARED — do not assume headless.
+    #
+    # This gateway serves two very different callers. An HA-side voice satellite is truly
+    # headless: it has no device to run a client_tool (weather, calendar, …), so an empty
+    # list is right — it tells the brain to self-fulfill server-side where it can (weather
+    # → edge Open-Meteo) instead of handing back an unfulfillable client_tool, so "weather
+    # this weekend" answers instead of dead-ending.
+    #
+    # But a real Dashie TABLET also comes through here, and it DOES declare its capabilities
+    # (BrainConverseClient.kt → DeviceToolCapabilities: calendar/weather/schedule_action/
+    # calendar_write, plus music/video_feeds when present). Hard-coding [] threw that away and
+    # told the brain the tablet could fulfill NOTHING: music/video_feeds dropped from the
+    # prompt (prompt.ts DEVICE_ONLY_TOOLS), calendar_write hitting its explicit-declaration
+    # decline, and weather answered from the edge instead of the device's dashboard source.
+    #
+    # So: a declared list (even an empty one) wins; only a caller that declares NOTHING gets
+    # the headless default. This is the one field pass-through can't handle — absent must NOT
+    # forward as absent, because the brain reads a missing field as "this caller fulfills
+    # everything", which is exactly right for a tablet and exactly wrong for a satellite.
+    declared = payload.get("client_fulfilled_tools")
+    payload["client_fulfilled_tools"] = declared if isinstance(declared, list) else []
+
+    return payload, endpoint_id, route
+
 
 class DashieVoiceConverseView(HomeAssistantView):
     """Authed by the HA token; calls the brain on the account's behalf."""
@@ -68,64 +153,10 @@ class DashieVoiceConverseView(HomeAssistantView):
         if not text or not isinstance(text, str):
             return web.json_response({"ok": False, "error": "text_required"}, status=400)
 
-        endpoint_id = body.get("endpoint_id") or "ha-voice"
-        # Caller-mode retention (§17): the brain must NEVER persist transcript text
-        # to Supabase for kiosk turns — it only signals metadata.retain_transcript,
-        # and we keep the transcript HA-locally below.
-        options = dict(body.get("options") or {})
-        options["retain_mode"] = "caller"
-        # Capability: HONOUR WHAT THE CALLER DECLARED — do not assume headless.
-        #
-        # This gateway serves two very different callers. An HA-side voice satellite is truly
-        # headless: it has no device to run a client_tool (weather, calendar, …), so an empty
-        # list is right — it tells the brain to self-fulfill server-side where it can (weather
-        # → edge Open-Meteo) instead of handing back an unfulfillable client_tool, so "weather
-        # this weekend" answers instead of dead-ending.
-        #
-        # But a real Dashie TABLET also comes through here — selecting "My Local LLM" routes
-        # EVERY endpoint via this gateway (see the route block below), and the tablet DOES
-        # declare its capabilities (BrainConverseClient.kt → DeviceToolCapabilities:
-        # calendar/weather/schedule_action/calendar_write, plus music/video_feeds when present).
-        # Hard-coding [] threw that away and told the brain the tablet could fulfill NOTHING:
-        # music/video_feeds dropped from the prompt (prompt.ts DEVICE_ONLY_TOOLS),
-        # calendar_write hitting its explicit-declaration decline, and weather answered from the
-        # edge instead of the device's own dashboard source. (Found 2026-07-16 while root-causing
-        # the BYOK transcript NULLs — same root cause: headless defaults applied to a caller that
-        # isn't headless.)
-        #
-        # So: a declared list (even an empty one) wins; only a caller that declares NOTHING gets
-        # the headless default. Note absent must NOT be forwarded as absent — the brain reads a
-        # missing field as "this caller fulfills everything", which is exactly wrong for a satellite.
-        declared = body.get("client_fulfilled_tools")
-        payload = {
-            "text": text,
-            "endpoint_id": endpoint_id,
-            "options": options,
-            "client_fulfilled_tools": declared if isinstance(declared, list) else [],
-        }
-        # Forward everything the brain's VoiceRequest contract reads. This is an ALLOWLIST on
-        # purpose — the gateway owns `options`/`client_fulfilled_tools` above and must not let a
-        # caller override them — but it had rotted into dropping fields the tablet actually sends,
-        # silently, with no error (found 2026-07-16):
-        #   • timezone   — the brain formats "today" from it and the sports tool needs it for the
-        #                  user's clock. WITHOUT it the server is UTC: clockTime() returns '' (so a
-        #                  game answer loses its kickoff time entirely — "Spain play Argentina,
-        #                  Sun, Jul 19", no time) and relativeDay()'s Today/Tomorrow is computed in
-        #                  UTC, so an Eastern evening reads as the next day. types.ts says it
-        #                  outright: "10pm Eastern → next-day 'today' without it".
-        #   • announcement — marks a turn as a SCHEDULED ACTION FIRING so the brain withholds
-        #                  schedule_action. Dropped, a fired action can re-schedule ITSELF and
-        #                  compound on every fire.
-        #   • language / retrieve_pictures — contract fields; forward rather than re-default here.
-        # Same root cause as the client_fulfilled_tools erasure above: this gateway was written for
-        # ONE headless caller, then "My Local LLM" routed every endpoint through it (see below) and
-        # nobody re-checked what the payload builder was quietly discarding.
-        for key in (
-            "history", "provided_context", "conversation_id",
-            "timezone", "language", "announcement", "retrieve_pictures",
-        ):
-            if body.get(key) is not None:
-                payload[key] = body[key]
+        # Pass-through by default; the gateway overrides only what it owns (see
+        # build_brain_payload / GATEWAY_OWNED_KEYS above). `route` is gateway-internal and
+        # has already been stripped from the payload's options.
+        payload, endpoint_id, route = build_brain_payload(body)
 
         # ── Route selection: cloud brain (default) vs on-prem add-on brain ─────
         # Precedence (build plan §13.17):
@@ -133,7 +164,6 @@ class DashieVoiceConverseView(HomeAssistantView):
         #   2. else the ACCOUNT's selected model — "My Local LLM" (ai.model=='local') → local.
         # The add-on is the single reader of user_settings; we just ask it for the route. So
         # selecting "My Local LLM" in the Console routes every endpoint here with no per-device flag.
-        route = options.get("route")
         if route is None:
             route = (await get_voice_config(hass)).get("route", "cloud")
         if route == "local":
