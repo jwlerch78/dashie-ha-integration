@@ -69,24 +69,31 @@ def _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg):
     entity registry). `area`/`aliases` are omitted when empty. Ids with no current state are skipped
     (stale/removed refs)."""
     out = []
+    debug_err = None
     for entity_id in entity_ids:
-        st = hass.states.get(entity_id)
-        if st is None:
+        try:
+            st = hass.states.get(entity_id)
+            if st is None:
+                continue
+            ent = {
+                "entity_id": entity_id,
+                "domain": entity_id.split(".")[0],
+                "friendly_name": st.attributes.get("friendly_name") or "",
+                "state": st.state,
+            }
+            area = _area_name_for(entity_id, ent_reg, dev_reg, area_reg)
+            if area:
+                ent["area"] = area
+            reg = ent_reg.async_get(entity_id)
+            aliases = getattr(reg, "aliases", None) if reg is not None else None
+            if aliases:
+                ent["aliases"] = sorted(aliases)
+            out.append(ent)
+        except Exception as e:  # noqa: BLE001 — one bad entity must never 500 the endpoint
+            if debug_err is None:
+                debug_err = f"{entity_id}: {type(e).__name__}: {e}"
             continue
-        ent = {
-            "entity_id": entity_id,
-            "domain": entity_id.split(".")[0],
-            "friendly_name": st.attributes.get("friendly_name") or "",
-            "state": st.state,
-        }
-        area = _area_name_for(entity_id, ent_reg, dev_reg, area_reg)
-        if area:
-            ent["area"] = area
-        reg = ent_reg.async_get(entity_id)
-        if reg is not None and reg.aliases:
-            ent["aliases"] = sorted(reg.aliases)
-        out.append(ent)
-    return out
+    return out, debug_err
 
 
 class DashieExposedEntitiesView(HomeAssistantView):
@@ -112,15 +119,21 @@ class DashieExposedEntitiesView(HomeAssistantView):
         dev_reg = dr.async_get(hass)
         area_reg = ar.async_get(hass)
         areas = {}
+        area_err = None
         for entity_id in entity_ids:
-            name = _area_name_for(entity_id, ent_reg, dev_reg, area_reg)
-            if name:
-                areas[entity_id] = name
+            try:
+                name = _area_name_for(entity_id, ent_reg, dev_reg, area_reg)
+                if name:
+                    areas[entity_id] = name
+            except Exception as e:  # noqa: BLE001
+                if area_err is None:
+                    area_err = f"area {entity_id}: {type(e).__name__}: {e}"
 
-        entities = _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg)
-        return web.json_response(
-            {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas, "entities": entities}
-        )
+        entities, enrich_err = _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg)
+        resp = {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas, "entities": entities}
+        if area_err or enrich_err:
+            resp["_debug_err"] = area_err or enrich_err
+        return web.json_response(resp)
 
 
 # Lovelace card fields that reference entities. Kept small + explicit — the common cards use these;
@@ -231,11 +244,12 @@ class DashieDashboardEntitiesView(HomeAssistantView):
             if name:
                 areas[entity_id] = name
 
-        entities = _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg)
-        return web.json_response(
-            {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas,
-             "entities": entities, "url_path": url_path}
-        )
+        entities, enrich_err = _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg)
+        resp = {"entity_ids": entity_ids, "count": len(entity_ids), "areas": areas,
+                "entities": entities, "url_path": url_path}
+        if enrich_err:
+            resp["_debug_err"] = enrich_err
+        return web.json_response(resp)
 
 
 def register_exposed_entities_views(hass: HomeAssistant) -> None:
