@@ -85,9 +85,14 @@ def _enrich_entities(entity_ids, hass, ent_reg, dev_reg, area_reg):
             if area:
                 ent["area"] = area
             reg = ent_reg.async_get(entity_id)
-            aliases = getattr(reg, "aliases", None) if reg is not None else None
-            if aliases:
-                ent["aliases"] = sorted(aliases)
+            raw_aliases = getattr(reg, "aliases", None) if reg is not None else None
+            if raw_aliases:
+                # Keep only real string aliases. reg.aliases can contain non-str objects (HA's
+                # ComputedNameType) that HA's own JSON encoder handles but web.json_response's
+                # stdlib json.dumps cannot — those must be dropped or the endpoint 500s.
+                str_aliases = sorted(a for a in raw_aliases if isinstance(a, str) and a)
+                if str_aliases:
+                    ent["aliases"] = str_aliases
             out.append(ent)
         except Exception as e:  # noqa: BLE001 — one bad entity must never 500 the endpoint
             if debug_err is None:
