@@ -156,6 +156,52 @@ async def test_account_config_decides_the_route_when_the_caller_omits_it(
     assert converse_local.await_args.args[1]["timezone"] == "America/New_York"
 
 
+# ── X-Dashie-Brain-Route: the authoritative-route stamp that un-strands a device ──
+
+
+async def test_header_carries_the_AUTHORITATIVE_route_not_the_callers_stale_one(
+    hass: HomeAssistant,
+) -> None:
+    """THE keystone. A device stranded on a stale cache sends options.route='local'; the gateway
+    obeys it for THIS turn (executes local) but MUST stamp the account's real route ('cloud') on
+    the response so the device re-caches and self-corrects next turn. Echoing the executed route
+    would teach it nothing and the strand would never end."""
+    body = {**TABLET_BODY, "options": {"model": "m", "route": "local"}}  # stale caller
+    with patch(
+        "custom_components.dashie.voice_view.get_voice_config",
+        AsyncMock(return_value={"route": "cloud"}),  # the ACCOUNT is cloud
+    ), patch(
+        "custom_components.dashie.voice_view.converse_local",
+        AsyncMock(return_value=(TURN, 200)),
+    ):
+        resp = await DashieVoiceConverseView().post(_request(hass, body))
+
+    assert resp.headers["X-Dashie-Brain-Route"] == "cloud"
+
+
+async def test_header_present_on_the_streaming_path(hass: HomeAssistant) -> None:
+    """The real tablet path is NDJSON — the header must ride the StreamResponse (set before
+    prepare), not a body field."""
+    body = {**TABLET_BODY, "stream": True}
+    ndjson = b'{"kind":"final","turn":{"ok":true}}\n'
+    with aioresponses() as mock, patch(
+        "custom_components.dashie.voice_view.get_account_credential",
+        AsyncMock(return_value="jwt"),
+    ), patch(
+        "custom_components.dashie.voice_view.get_voice_config",
+        AsyncMock(return_value={"route": "cloud"}),
+    ):
+        mock.post(BRAIN_URL, status=200, body=ndjson)
+        req = _request(hass, body)
+        req.transport = MagicMock()
+        with patch("aiohttp.web.StreamResponse.prepare", AsyncMock()), patch(
+            "aiohttp.web.StreamResponse.write", AsyncMock()
+        ), patch("aiohttp.web.StreamResponse.write_eof", AsyncMock()):
+            resp = await DashieVoiceConverseView().post(req)
+
+    assert resp.headers["X-Dashie-Brain-Route"] == "cloud"
+
+
 async def test_streaming_path_forwards_the_full_payload(hass: HomeAssistant) -> None:
     """The tablet sets stream:true, so the NDJSON path is the REAL production path for it —
     a drop here would be invisible to every non-streaming test."""

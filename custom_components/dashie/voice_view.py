@@ -158,23 +158,40 @@ class DashieVoiceConverseView(HomeAssistantView):
         # has already been stripped from the payload's options.
         payload, endpoint_id, route = build_brain_payload(body)
 
+        # ── Authoritative account route → X-Dashie-Brain-Route response header ──
+        # The device caches its route from a lazy /voice/status probe refreshed only on a
+        # wake word, so a route set at the opening wake freezes for a whole conversation — and
+        # a stale `local` strands a cloud household (the device sends options.route='local',
+        # we obey, the on-prem brain wants a key the account lacks → "no API key" every turn).
+        # Fix: stamp the ACCOUNT's authoritative route on every converse response so the device
+        # self-corrects on the very next turn — no wake, no TTL, no failure required.
+        #
+        # Read get_voice_config even when the caller sent an explicit options.route: that route
+        # may be the STALE 'local' we're trying to correct, so the device must hear the account's
+        # REAL route, not the one it asked for. get_voice_config is a same-box add-on call that
+        # never raises (defaults to cloud). In the common tablet case route is None, so this is
+        # the SAME call the execution path already made — reused for both; the only added call is
+        # the rare explicit-route turn, which is exactly when re-learning the route matters.
+        authoritative_route = (await get_voice_config(hass)).get("route", "cloud")
+        route_header = {"X-Dashie-Brain-Route": authoritative_route}
+
         # ── Route selection: cloud brain (default) vs on-prem add-on brain ─────
         # Precedence (build plan §13.17):
         #   1. explicit options.route — a per-request override (the kiosk dev toggle / harness),
         #   2. else the ACCOUNT's selected model — "My Local LLM" (ai.model=='local') → local.
-        # The add-on is the single reader of user_settings; we just ask it for the route. So
-        # selecting "My Local LLM" in the Console routes every endpoint here with no per-device flag.
+        # (Execution precedence unchanged — the header above corrects the device for NEXT turn;
+        # obeying the caller's explicit route here keeps the dev toggle / harness working.)
         if route is None:
-            route = (await get_voice_config(hass)).get("route", "cloud")
+            route = authoritative_route
         if route == "local":
             try:
                 turn, status = await converse_local(hass, payload)
             except SharingDisabled:
-                return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403)
+                return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403, headers=route_header)
             except AddonUnavailable as err:
-                return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
+                return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503, headers=route_header)
             await self._maybe_retain(hass, turn, text, endpoint_id, payload)
-            return web.json_response(turn, status=(200 if status < 400 else status))
+            return web.json_response(turn, status=(200 if status < 400 else status), headers=route_header)
 
         # ── Cloud brain path ──────────────────────────────────────────────────
         # Gated on the add-on's household-sharing opt-in: get_account_credential
@@ -182,9 +199,9 @@ class DashieVoiceConverseView(HomeAssistantView):
         try:
             cred = await get_account_credential(hass)  # account JWT, from the add-on
         except SharingDisabled:
-            return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403)
+            return web.json_response({"ok": False, "error": "sharing_disabled"}, status=403, headers=route_header)
         except AddonUnavailable as err:
-            return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
+            return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503, headers=route_header)
 
         brain_headers = {
             "Content-Type": "application/json",
@@ -203,9 +220,9 @@ class DashieVoiceConverseView(HomeAssistantView):
                     status = 200 if resp.status < 400 else resp.status
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("voice converse → brain failed: %s", err)
-                return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502)
+                return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502, headers=route_header)
             await self._maybe_retain(hass, turn, text, endpoint_id, payload)
-            return web.json_response(turn, status=status)
+            return web.json_response(turn, status=status, headers=route_header)
 
         # STREAM the brain's NDJSON straight through so the kiosk shows live progress
         # (thinking → "Searching the web…" → "Finalizing…") — one JSON object per line:
@@ -213,7 +230,7 @@ class DashieVoiceConverseView(HomeAssistantView):
         # and capture the final turn for caller-side transcript retention.
         payload["stream"] = True
         downstream = web.StreamResponse(
-            headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-cache"}
+            headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-cache", **route_header}
         )
         prepared = False
         final_turn = None
@@ -222,7 +239,7 @@ class DashieVoiceConverseView(HomeAssistantView):
                 if resp.status >= 400:
                     # Error before any stream — relay it as a plain JSON body, not a stream.
                     err_body = await resp.text()
-                    return web.Response(status=resp.status, text=err_body, content_type="application/json")
+                    return web.Response(status=resp.status, text=err_body, content_type="application/json", headers=route_header)
                 await downstream.prepare(request)
                 prepared = True
                 async for raw in resp.content:  # NDJSON is line-delimited
