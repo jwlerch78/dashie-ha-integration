@@ -103,7 +103,27 @@ class DashieVoiceConverseView(HomeAssistantView):
             "options": options,
             "client_fulfilled_tools": declared if isinstance(declared, list) else [],
         }
-        for key in ("history", "provided_context", "conversation_id"):
+        # Forward everything the brain's VoiceRequest contract reads. This is an ALLOWLIST on
+        # purpose — the gateway owns `options`/`client_fulfilled_tools` above and must not let a
+        # caller override them — but it had rotted into dropping fields the tablet actually sends,
+        # silently, with no error (found 2026-07-16):
+        #   • timezone   — the brain formats "today" from it and the sports tool needs it for the
+        #                  user's clock. WITHOUT it the server is UTC: clockTime() returns '' (so a
+        #                  game answer loses its kickoff time entirely — "Spain play Argentina,
+        #                  Sun, Jul 19", no time) and relativeDay()'s Today/Tomorrow is computed in
+        #                  UTC, so an Eastern evening reads as the next day. types.ts says it
+        #                  outright: "10pm Eastern → next-day 'today' without it".
+        #   • announcement — marks a turn as a SCHEDULED ACTION FIRING so the brain withholds
+        #                  schedule_action. Dropped, a fired action can re-schedule ITSELF and
+        #                  compound on every fire.
+        #   • language / retrieve_pictures — contract fields; forward rather than re-default here.
+        # Same root cause as the client_fulfilled_tools erasure above: this gateway was written for
+        # ONE headless caller, then "My Local LLM" routed every endpoint through it (see below) and
+        # nobody re-checked what the payload builder was quietly discarding.
+        for key in (
+            "history", "provided_context", "conversation_id",
+            "timezone", "language", "announcement", "retrieve_pictures",
+        ):
             if body.get(key) is not None:
                 payload[key] = body[key]
 
