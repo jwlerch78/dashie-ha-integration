@@ -74,16 +74,34 @@ class DashieVoiceConverseView(HomeAssistantView):
         # and we keep the transcript HA-locally below.
         options = dict(body.get("options") or {})
         options["retain_mode"] = "caller"
+        # Capability: HONOUR WHAT THE CALLER DECLARED — do not assume headless.
+        #
+        # This gateway serves two very different callers. An HA-side voice satellite is truly
+        # headless: it has no device to run a client_tool (weather, calendar, …), so an empty
+        # list is right — it tells the brain to self-fulfill server-side where it can (weather
+        # → edge Open-Meteo) instead of handing back an unfulfillable client_tool, so "weather
+        # this weekend" answers instead of dead-ending.
+        #
+        # But a real Dashie TABLET also comes through here — selecting "My Local LLM" routes
+        # EVERY endpoint via this gateway (see the route block below), and the tablet DOES
+        # declare its capabilities (BrainConverseClient.kt → DeviceToolCapabilities:
+        # calendar/weather/schedule_action/calendar_write, plus music/video_feeds when present).
+        # Hard-coding [] threw that away and told the brain the tablet could fulfill NOTHING:
+        # music/video_feeds dropped from the prompt (prompt.ts DEVICE_ONLY_TOOLS),
+        # calendar_write hitting its explicit-declaration decline, and weather answered from the
+        # edge instead of the device's own dashboard source. (Found 2026-07-16 while root-causing
+        # the BYOK transcript NULLs — same root cause: headless defaults applied to a caller that
+        # isn't headless.)
+        #
+        # So: a declared list (even an empty one) wins; only a caller that declares NOTHING gets
+        # the headless default. Note absent must NOT be forwarded as absent — the brain reads a
+        # missing field as "this caller fulfills everything", which is exactly wrong for a satellite.
+        declared = body.get("client_fulfilled_tools")
         payload = {
             "text": text,
             "endpoint_id": endpoint_id,
             "options": options,
-            # This gateway is HEADLESS — it has no device to run a client_tool (weather,
-            # calendar, …). Declaring an empty capability list tells the brain to
-            # self-fulfill server-side where it can (weather → edge Open-Meteo) instead of
-            # handing back an unfulfillable client_tool, so "weather this weekend" answers
-            # instead of dead-ending. A capable caller (the Dashie tablet) omits this field.
-            "client_fulfilled_tools": [],
+            "client_fulfilled_tools": declared if isinstance(declared, list) else [],
         }
         for key in ("history", "provided_context", "conversation_id"):
             if body.get(key) is not None:
