@@ -134,6 +134,29 @@ def build_brain_payload(body: dict) -> tuple[dict, str, str | None]:
     return payload, endpoint_id, route
 
 
+async def call_cloud_brain(hass: HomeAssistant, payload: dict, cred: str | None = None) -> tuple[dict, int]:
+    """POST a prepared VoiceRequest to the cloud brain with the account credential.
+
+    Shared by DashieVoiceConverseView (non-stream branch) and the conversation.dashie agent so
+    the brain URL + auth headers live in ONE place (seam rule — no second POST site). Raises
+    SharingDisabled / AddonUnavailable when the account credential can't be obtained. `cred` may
+    be passed by a caller that already fetched it (the view has, for the stream branch) to avoid a
+    redundant — though cached — round-trip. Returns (turn, status) with status normalized to 200
+    on a <400 response.
+    """
+    if cred is None:
+        cred = await get_account_credential(hass)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {cred}",
+        "apikey": cred,
+    }
+    session = async_get_clientsession(hass)
+    async with session.post(BRAIN_URL, json=payload, headers=headers) as resp:
+        turn = await resp.json(content_type=None)
+        return turn, (200 if resp.status < 400 else resp.status)
+
+
 class DashieVoiceConverseView(HomeAssistantView):
     """Authed by the HA token; calls the brain on the account's behalf."""
 
@@ -215,9 +238,7 @@ class DashieVoiceConverseView(HomeAssistantView):
         # parse and would choke on NDJSON, so it keeps the buffered single-turn path.
         if not body.get("stream"):
             try:
-                async with session.post(BRAIN_URL, json=payload, headers=brain_headers) as resp:
-                    turn = await resp.json(content_type=None)
-                    status = 200 if resp.status < 400 else resp.status
+                turn, status = await call_cloud_brain(hass, payload, cred=cred)
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("voice converse → brain failed: %s", err)
                 return web.json_response({"ok": False, "error": f"brain_call_failed: {err}"}, status=502, headers=route_header)
