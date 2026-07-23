@@ -170,7 +170,13 @@ class DashieConversationEntity(conversation.ConversationEntity):
                 if not domain or not service:
                     _LOGGER.warning("DROP: HA command missing domain/service: %s", cmd)
                     continue
-                data = {k: v for k, v in cmd.items() if k not in ("domain", "service")}
+                # The brain emits {domain, service, data:{...}} — service data NESTED under
+                # "data" (e.g. {"entity_id": "switch.string_lights"}). Tolerate a flat
+                # {domain, service, ...data} shape too for forward-compat.
+                if isinstance(cmd.get("data"), dict):
+                    data = dict(cmd["data"])
+                else:
+                    data = {k: v for k, v in cmd.items() if k not in ("domain", "service")}
                 try:
                     await hass.services.async_call(domain, service, data, blocking=True)
                     _LOGGER.info("Dashie executed HA %s.%s %s", domain, service, data)
