@@ -7,7 +7,12 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfInformation, LIGHT_LUX
+from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    UnitOfInformation,
+    LIGHT_LUX,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -50,6 +55,7 @@ async def async_setup_entry(
         DashieRamUsageSensor(coordinator, device_id),
         DashieStorageSensor(coordinator, device_id),
         DashieWifiSignalSensor(coordinator, device_id),
+        DashieWifiRssiSensor(coordinator, device_id),
     ]
 
     async_add_entities(entities)
@@ -164,6 +170,40 @@ class DashieWifiSignalSensor(DashieEntity, SensorEntity):
             "ip_address": self.coordinator.data.get("ip4"),
             "mac_address": self.coordinator.data.get("Mac"),
         }
+
+
+class DashieWifiRssiSensor(DashieEntity, SensorEntity):
+    """WiFi signal strength sensor in dBm (raw RSSI).
+
+    Complements DashieWifiSignalSensor (0-100 quality level): dBm is the standard
+    unit across HA WiFi sensors, so this one is comparable across devices and
+    usable with meaningful automation thresholds (e.g. below -70 dBm). Requires
+    an APK that reports wifiRssi (v1.0.16+); unavailable on older APKs.
+    """
+
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_translation_key = "wifi_rssi"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_wifi_rssi"
+        self._attr_name = "WiFi Signal Strength"
+
+    @property
+    def available(self) -> bool:
+        """Unavailable when the APK predates wifiRssi or the device is off WiFi."""
+        return super().available and "wifiRssi" in (self.coordinator.data or {})
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the WiFi signal strength in dBm."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("wifiRssi")
+        return None
 
 
 class DashieStorageSensor(DashieEntity, SensorEntity):
