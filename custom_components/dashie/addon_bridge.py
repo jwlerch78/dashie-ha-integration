@@ -38,6 +38,11 @@ _VOICE_CONFIG_PATH = "/api/internal/voice-config"
 _AUTHORIZE_DEVICE_PATH = "/api/internal/authorize-device"
 # On-prem brain (local model, runs IN the add-on — build plan §13.16/§13.17).
 _CONVERSE_LOCAL_PATH = "/api/voice/converse-local"
+# BYOK-for-Live: mint a short-lived, Live-only Gemini ephemeral token from the box's stored
+# gemini key. The RAW KEY NEVER LEAVES THE BOX — only the token is returned. Ingress-only on the
+# add-on (no LAN port), so a device can't reach it directly; it brokers through this gateway.
+# Build plan 20260723_BYOK_LIVE_EPHEMERAL_TOKENS.md.
+_LIVE_TOKEN_PATH = "/api/keys/live-token"
 
 # Shared bridge secret (Lever 1, build plan 20260702_BRIDGE_AUTH_HARDENING.md). The add-on
 # provisions it to its addon_config, surfaced to HA Core at /config/addon_configs/dashie/. We
@@ -410,6 +415,44 @@ async def converse_local(hass: HomeAssistant, payload: dict) -> tuple[dict, int]
         if status == 403:
             _working_base = base
             raise SharingDisabled("household sharing disabled")
+
+        _working_base = base
+        return (body or {}), status
+
+    raise AddonUnavailable(last_err)
+
+
+async def mint_live_token(hass: HomeAssistant, model: str | None = None) -> tuple[dict, int]:
+    """Mint a Live-only Gemini ephemeral token from the add-on's stored gemini key.
+
+    POSTs to the add-on's /api/keys/live-token (BYOK-for-Live, build plan
+    20260723_BYOK_LIVE_EPHEMERAL_TOKENS.md). The add-on reads its own key store, calls Google
+    authTokens, and returns ONLY the token — the raw key never leaves the box. The device brokers
+    through here because the add-on is ingress-only (no LAN port), then passes the token to the
+    conversation-relay as the x-dashie-live-token header.
+
+    No account credential is needed (the key lives on the box; this is a LAN-scoped call). Returns
+    (body, status): body is `{token, expireTime, newSessionExpireTime}` on 200, or `{error: ...}`
+    on 503 (no_gemini_key) / 502 (mint_failed). Raises AddonUnavailable if no base is reachable.
+    """
+    global _working_base
+    session = async_get_clientsession(hass)
+    bases = await _resolve_bases(session)
+
+    payload = {}
+    if model:
+        payload["model"] = model
+
+    last_err = "no candidates"
+    for base in bases:
+        url = f"{base}{_LIVE_TOKEN_PATH}"
+        try:
+            async with session.post(url, json=payload, timeout=_TIMEOUT) as resp:
+                status = resp.status
+                body = await resp.json(content_type=None)
+        except Exception as err:  # noqa: BLE001
+            last_err = f"{base}: {err}"
+            continue
 
         _working_base = base
         return (body or {}), status

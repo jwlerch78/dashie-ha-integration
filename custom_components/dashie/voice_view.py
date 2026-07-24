@@ -36,6 +36,7 @@ from .addon_bridge import (
     get_account_credential,
     get_sharing_status,
     get_voice_config,
+    mint_live_token,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -507,10 +508,50 @@ class DashieAccountAuthorizeView(HomeAssistantView):
         )
 
 
+class DashieVoiceLiveTokenView(HomeAssistantView):
+    """Broker a Live-only Gemini ephemeral token to a device for a BYOK Live session.
+
+    BYOK-for-Live (build plan 20260723_BYOK_LIVE_EPHEMERAL_TOKENS.md): a logged-in device with
+    `voice.liveByok` on runs Gemini Live on the household's OWN AI-Studio key, so the AI costs
+    Dashie nothing. The raw key lives ONLY in the add-on's key store; the add-on mints a
+    short-lived, Live-only ephemeral token from it and returns just the token. The device is the
+    broker — but the add-on is ingress-only (no LAN port), so it can't reach the add-on directly.
+    This view is the reachable hop: authed by the HA token the device already holds, it forwards
+    to the add-on's /api/keys/live-token and returns the token as-is.
+
+    NO account credential and NO raw key ever pass through here — only the ephemeral token, which
+    is Live-only and expires in minutes. The device sends it to the conversation-relay as the
+    `x-dashie-live-token` header; the relay opens the BYOK upstream and skips the AI credit debit.
+    """
+
+    url = "/api/dashie/voice/live-token"
+    name = "api:dashie:voice:live-token"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        model = (body or {}).get("model")
+        model = model if isinstance(model, str) and model else None
+
+        try:
+            result, status = await mint_live_token(hass, model)
+        except AddonUnavailable as err:
+            return web.json_response({"ok": False, "error": f"addon_unavailable: {err}"}, status=503)
+
+        # Pass the add-on's status through: 200 with {token,...}; 503 no_gemini_key;
+        # 502 mint_failed. The device falls back to the Dashie-key path on any non-200.
+        return web.json_response(result, status=(200 if status < 400 else status))
+
+
 def register_voice_views(hass: HomeAssistant) -> None:
     """Register Dashie voice gateway HTTP views."""
     hass.http.register_view(DashieVoiceConverseView())
     hass.http.register_view(DashieVoiceStatusView())
     hass.http.register_view(DashieVoiceSessionView())
     hass.http.register_view(DashieAccountAuthorizeView())
+    hass.http.register_view(DashieVoiceLiveTokenView())
     _LOGGER.info("Registered Dashie voice gateway views")
