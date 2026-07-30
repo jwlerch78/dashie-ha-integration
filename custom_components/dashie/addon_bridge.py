@@ -110,21 +110,48 @@ async def _resolve_bases(session) -> list[str]:
 
 
 def _is_dashie_addon(a: dict) -> bool:
-    """A Dashie Console add-on of either channel. Repo-install slugs are
-    `<repo>_dashie` (prod) / `<repo>_dashie_dev` (dev); names "Dashie Console"
-    and "Dashie Console (Dev)"."""
+    """Any Dashie add-on, either PRODUCT and either channel.
+
+    Two separate add-on products can serve this integration, and both must match:
+
+      family  — repo `dashie-ha-app`, slugs `dashie` / `dashie_dev`,
+                names "Dashie Console" / "Dashie Console (Dev)"
+      HA      — repo `dashie-ha-console` (formerly Chickadee), slugs
+                `dashie_ha` / `dashie_ha_dev`, names "Dashie for Home Assistant[ (Dev)]"
+
+    Repo installs prefix the slug with a repo hash (`62f754e2_dashie_ha_dev`), so match
+    on suffix, never equality alone.
+
+    The HA-edition arm was MISSING until 2026-07-30 and that broke kiosk provisioning in
+    the field: the 07-30 Chickadee→Dashie rename moved the HA add-on to `dashie_ha*`,
+    which satisfies none of the old conditions — `_dashie_ha_dev` does not end with
+    `_dashie` or `dashie_dev`, and "Dashie for Home Assistant" does not start with
+    "Dashie Console". Supervisor discovery therefore returned [], the caller fell back to
+    the `local-dashie` hostnames (valid only for a LOCAL install), and every add-on call
+    failed with `addon_unavailable` on a box where the add-on was installed and running.
+    """
     slug = a.get("slug") or ""
     name = a.get("name") or ""
     return (
         slug == "dashie"
         or slug.endswith("_dashie")
         or slug.endswith("dashie_dev")
+        or slug == "dashie_ha"
+        or slug.endswith("_dashie_ha")
+        or slug.endswith("dashie_ha_dev")
         or name.startswith("Dashie Console")
+        or name.startswith("Dashie for Home Assistant")
     )
 
 
 def _is_dev_addon(a: dict) -> bool:
-    return (a.get("slug") or "").endswith("dashie_dev") or "(Dev)" in (a.get("name") or "")
+    """Dev channel of either product.
+
+    Matches on the `_dev` suffix rather than the old `dashie_dev`: the HA-edition dev
+    slug is `dashie_ha_dev`, which ends with `ha_dev`, so the narrower test silently
+    classified it as PROD and lost the dev-first ordering on a box running both.
+    """
+    return (a.get("slug") or "").endswith("_dev") or "(Dev)" in (a.get("name") or "")
 
 
 async def _discover_via_supervisor(session) -> list[str]:
