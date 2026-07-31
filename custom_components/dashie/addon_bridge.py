@@ -44,13 +44,35 @@ _CONVERSE_LOCAL_PATH = "/api/voice/converse-local"
 # Build plan 20260723_BYOK_LIVE_EPHEMERAL_TOKENS.md.
 _LIVE_TOKEN_PATH = "/api/keys/live-token"
 
-# Shared bridge secret (Lever 1, build plan 20260702_BRIDGE_AUTH_HARDENING.md). The add-on
-# provisions it to its addon_config, surfaced to HA Core at /config/addon_configs/dashie/. We
-# read it once (cached) and present it on every /api/internal/* call so the add-on can reject
-# unauthenticated callers on the hassio network. Absent (add-on not updated / not yet mapped) →
-# no header → the add-on's observe mode allows it, so this is back/forward compatible.
+# Shared bridge secret (Lever 1, build plan 20260702_BRIDGE_AUTH_HARDENING.md). Read once
+# (cached) and presented on every /api/internal/* call so the add-on can reject unauthenticated
+# callers on the hassio network.
+#
+# TWO add-on products, and they do NOT share this contract — send both headers and try every
+# path, because which one is installed is not knowable here:
+#
+#   family Console (`dashie` / `dashie_dev`)
+#       header  X-Dashie-Bridge-Secret
+#       file    addon_configs/dashie/bridge_secret
+#       missing header → observe mode allows it
+#
+#   HA edition (`dashie_ha` / `dashie_ha_dev`, formerly Chickadee)
+#       header  x-dashie-voice-bridge-secret
+#       file    <ha-config>/.dashie_voice/bridge_secret
+#       ENFORCED FROM BIRTH — a missing header is a hard 401, no observe grace
+#
+# The HA edition drops its secret in the HA config dir precisely because HA Core cannot see
+# /addon_configs on HAOS (the add-on's own bridge-auth.js records this as verified 2026-07-25).
+# Reading only the addon_configs path therefore found nothing, sent no header, and every call
+# to the HA-edition add-on 401'd — which is what blocked kiosk provisioning on 2026-07-30.
+#
+# Sending both headers is safe: each add-on reads only the one it knows and ignores the other.
 _BRIDGE_HEADER = "X-Dashie-Bridge-Secret"
-_BRIDGE_SECRET_REL = "addon_configs/dashie/bridge_secret"
+_BRIDGE_HEADER_HA = "x-dashie-voice-bridge-secret"
+_BRIDGE_SECRET_RELS = (
+    "addon_configs/dashie/bridge_secret",   # family Console
+    ".dashie_voice/bridge_secret",          # HA edition
+)
 _bridge_secret: str | None = None
 
 # Fallback addresses if Supervisor discovery is unavailable.
@@ -198,32 +220,47 @@ async def _discover_via_supervisor(session) -> list[str]:
         return []
 
 
+def _secret_headers(secret: str) -> dict:
+    """Both products' bridge headers. See _BRIDGE_SECRET_RELS for why both are sent."""
+    return {_BRIDGE_HEADER: secret, _BRIDGE_HEADER_HA: secret}
+
+
 async def _bridge_headers(hass: HomeAssistant) -> dict:
-    """Auth header for /api/internal/* calls, or {} when the secret isn't provisioned yet
-    (add-on not updated / addon_config not mapped) — the add-on's observe mode then allows it."""
+    """Auth headers for /api/internal/* calls, or {} when no secret is provisioned yet.
+
+    {} is only survivable against the family Console (observe mode). The HA edition enforces
+    from birth, so an empty return there means every call 401s — if that happens, the secret
+    file is missing or unreadable, not optional.
+    """
     global _bridge_secret
     if _bridge_secret:
-        return {_BRIDGE_HEADER: _bridge_secret}
+        return _secret_headers(_bridge_secret)
 
     def _read() -> str | None:
-        # HA Core reaches an add-on's addon_config either under its own config dir
-        # (/config/addon_configs/<slug>/) or via a root mount (/addon_configs/<slug>/),
-        # depending on the install — try both.
-        for candidate in (hass.config.path(_BRIDGE_SECRET_REL), "/" + _BRIDGE_SECRET_REL):
-            try:
-                with open(candidate, encoding="utf-8") as fh:
-                    val = (fh.read() or "").strip()
-                    if val:
-                        return val
-            except (FileNotFoundError, OSError):
-                continue
+        # Each product publishes to its own path, and each path can appear either under HA's
+        # config dir or at the filesystem root depending on the install — try the cross product.
+        for rel in _BRIDGE_SECRET_RELS:
+            for candidate in (hass.config.path(rel), "/" + rel):
+                try:
+                    with open(candidate, encoding="utf-8") as fh:
+                        val = (fh.read() or "").strip()
+                        if val:
+                            _LOGGER.debug("bridge secret found at %s", candidate)
+                            return val
+                except (FileNotFoundError, OSError):
+                    continue
         return None
 
     secret = await hass.async_add_executor_job(_read)
     if secret:
         _bridge_secret = secret
-        _LOGGER.info("Bridge secret loaded from addon_config")
-        return {_BRIDGE_HEADER: secret}
+        _LOGGER.info("Bridge secret loaded")
+        return _secret_headers(secret)
+    _LOGGER.warning(
+        "No bridge secret found in %s — calls to the HA-edition add-on will 401 "
+        "(it enforces the bridge header from birth)",
+        ", ".join(_BRIDGE_SECRET_RELS),
+    )
     return {}
 
 
