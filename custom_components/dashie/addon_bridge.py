@@ -18,6 +18,7 @@ token instead of the raw account JWT to shrink the blast radius of a leaked secr
 """
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import time
@@ -69,9 +70,19 @@ _LIVE_TOKEN_PATH = "/api/keys/live-token"
 # Sending both headers is safe: each add-on reads only the one it knows and ignores the other.
 _BRIDGE_HEADER = "X-Dashie-Bridge-Secret"
 _BRIDGE_HEADER_HA = "x-dashie-voice-bridge-secret"
-_BRIDGE_SECRET_RELS = (
-    "addon_configs/dashie/bridge_secret",   # family Console
-    ".dashie_voice/bridge_secret",          # HA edition
+
+# GLOB, not a slug list. The addon_config mount surfaces to HA Core at
+# `addon_configs/<slug>/`, and there are four slugs across the two products
+# (dashie, dashie_dev, dashie_ha, dashie_ha_dev). Enumerating them here would be a fourth
+# copy of the slug vocabulary and would rot on the next rename — it already had: the list
+# read only `addon_configs/dashie/`, so the family Console's DEV channel (`dashie_dev`) was
+# never found either. That one degraded silently instead of 401ing, because the family
+# add-on defaults to observe mode — a silent drop, which is worse than the HA edition's
+# loud one. `dashie*` covers every present and future channel of both products without
+# naming any of them, and is narrow enough not to read a sibling add-on's secret.
+_BRIDGE_SECRET_GLOBS = (
+    "addon_configs/dashie*/bridge_secret",   # either product, any channel
+    ".dashie_voice/bridge_secret",           # HA edition's HA-config-dir channel
 )
 _bridge_secret: str | None = None
 
@@ -237,18 +248,19 @@ async def _bridge_headers(hass: HomeAssistant) -> dict:
         return _secret_headers(_bridge_secret)
 
     def _read() -> str | None:
-        # Each product publishes to its own path, and each path can appear either under HA's
-        # config dir or at the filesystem root depending on the install — try the cross product.
-        for rel in _BRIDGE_SECRET_RELS:
-            for candidate in (hass.config.path(rel), "/" + rel):
-                try:
-                    with open(candidate, encoding="utf-8") as fh:
-                        val = (fh.read() or "").strip()
-                        if val:
-                            _LOGGER.debug("bridge secret found at %s", candidate)
-                            return val
-                except (FileNotFoundError, OSError):
-                    continue
+        # Each product publishes to its own location, and each can appear under HA's config
+        # dir or at the filesystem root depending on the install — try the cross product.
+        for pattern in _BRIDGE_SECRET_GLOBS:
+            for base in (hass.config.path(pattern), "/" + pattern):
+                for candidate in sorted(glob.glob(base)):
+                    try:
+                        with open(candidate, encoding="utf-8") as fh:
+                            val = (fh.read() or "").strip()
+                            if val:
+                                _LOGGER.debug("bridge secret found at %s", candidate)
+                                return val
+                    except (FileNotFoundError, OSError):
+                        continue
         return None
 
     secret = await hass.async_add_executor_job(_read)
@@ -258,8 +270,9 @@ async def _bridge_headers(hass: HomeAssistant) -> dict:
         return _secret_headers(secret)
     _LOGGER.warning(
         "No bridge secret found in %s — calls to the HA-edition add-on will 401 "
-        "(it enforces the bridge header from birth)",
-        ", ".join(_BRIDGE_SECRET_RELS),
+        "(it enforces the bridge header from birth); the family Console will fall back "
+        "to observe mode and work, silently, unauthenticated",
+        ", ".join(_BRIDGE_SECRET_GLOBS),
     )
     return {}
 
