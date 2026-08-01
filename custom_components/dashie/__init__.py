@@ -25,6 +25,7 @@ from .const import (
     API_LOAD_URL,
     API_SET_BRIGHTNESS,
     API_SET_VOLUME,
+    VOICE_SIBLING_DOMAIN,
 )
 from .const import CONF_DEVICE_ID
 from . import addon_bridge
@@ -278,20 +279,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _sensor_push_registered = True
         _LOGGER.info("Registered Dashie sensor push endpoint")
 
-    # Voice-gateway ownership (open-core transition): when the Chickadee
-    # integration is configured, IT owns the /api/dashie/voice/* wire paths
-    # ("chickadee always owns voice" — chickadee CONTRACTS.md). We cede by not
-    # registering and set a flag chickadee's at-started guard reads; both
+    # Voice-gateway ownership: when this brand's sibling VOICE integration is
+    # configured, IT owns the /api/dashie/voice/* wire paths. We cede by not
+    # registering and set a flag the sibling's at-started guard reads; both
     # registering would race on the same aiohttp routes. The wire paths keep
     # the `dashie` prefix — they're a contract with shipped APKs, not brand.
     if not getattr(register_voice_views, '_registered', False):
-        if hass.config_entries.async_entries("chickadee"):
+        if hass.config_entries.async_entries(VOICE_SIBLING_DOMAIN):
             hass.data[DOMAIN]["voice_views_ceded"] = True
             register_voice_views._registered = True  # decided for this HA run
             _LOGGER.warning(
-                "Dashie voice gateway views CEDED to the Chickadee integration "
-                "(/api/dashie/voice/* will be served by chickadee; kiosk sharing "
-                "rides the Chickadee add-on's account)"
+                "Dashie voice gateway views CEDED to the %s integration "
+                "(/api/dashie/voice/* will be served by it; kiosk sharing "
+                "rides that add-on's account)",
+                VOICE_SIBLING_DOMAIN,
             )
         else:
             register_voice_views(hass)

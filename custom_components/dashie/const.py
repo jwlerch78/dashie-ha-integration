@@ -2,6 +2,16 @@
 
 DOMAIN = "dashie"
 
+# The sibling VOICE integration of this same brand. Voice-gateway ownership is a
+# within-brand handshake: this integration cedes the /api/dashie/voice/* routes
+# when its sibling is configured (see __init__.py), and the sibling stands down
+# when we are present and have NOT ceded. Both halves name each other through a
+# constant, never an inline literal — this pairing has already broken once, when
+# the sibling renamed its domain (chickadee -> dashie_voice) and this side kept
+# testing the dead name, so nobody ever ceded and the sibling DROP'd forever.
+# Cross-brand pairs never collide: each brand serves its own route prefix.
+VOICE_SIBLING_DOMAIN = "dashie_voice"
+
 
 def host_for_url(host: str) -> str:
     """Bracket an IPv6 literal so it's valid inside an http URL.
