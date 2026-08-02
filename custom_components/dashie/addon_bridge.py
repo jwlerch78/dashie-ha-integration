@@ -37,7 +37,7 @@ _CREDENTIAL_PATH = "/api/internal/account-credential"
 _SHARING_STATUS_PATH = "/api/internal/sharing-status"
 _VOICE_CONFIG_PATH = "/api/internal/voice-config"
 _AUTHORIZE_DEVICE_PATH = "/api/internal/authorize-device"
-# On-prem brain (local model, runs IN the add-on — build plan §13.16/§13.17).
+# On-prem brain (local model, runs IN the add-on).
 _CONVERSE_LOCAL_PATH = "/api/voice/converse-local"
 # BYOK-for-Live: mint a short-lived, Live-only Gemini ephemeral token from the box's stored
 # gemini key. The RAW KEY NEVER LEAVES THE BOX — only the token is returned. Ingress-only on the
@@ -96,7 +96,7 @@ _ADDON_CANDIDATES = (
 _REFRESH_SKEW = 120.0
 _TIMEOUT = ClientTimeout(total=5)
 # Brain calls run model inference on-prem (a LAN model, possibly cold) → far longer than
-# the 5s control timeout. Build plan §13.10 measured ~10s cold on a Mac 7B.
+# the 5s control timeout. Measured ~10s cold on a Mac 7B.
 _BRAIN_TIMEOUT = ClientTimeout(total=60)
 
 _cache: dict = {"jwt": None, "exp": 0.0, "user_id": None}
@@ -400,7 +400,7 @@ async def _sharing_is_off(hass: HomeAssistant) -> bool:
 
 
 async def get_voice_config(hass: HomeAssistant) -> dict:
-    """The account's voice ROUTE, read by the add-on from user_settings (build plan §13.17/§16.7).
+    """The account's voice ROUTE, read by the add-on from user_settings.
 
     Returns the add-on's `{route: 'local'|'cloud', model_is_local: bool}` so the gateway can route
     cloud-vs-local based on the account's selected AI model ("My Local LLM" → local) WITHOUT the
@@ -466,7 +466,7 @@ async def authorize_device(hass: HomeAssistant, user_code: str) -> tuple[dict, i
 async def converse_local(hass: HomeAssistant, payload: dict) -> tuple[dict, int]:
     """Run a transcript through the add-on's ON-PREM brain (local model on the HA machine).
 
-    POSTs to the add-on's /api/voice/converse-local (build plan §13.16/§13.17). The add-on
+    POSTs to the add-on's /api/voice/converse-local. The add-on
     runs the SAME brain core the cloud edge fn runs, but against a LAN model — nothing but the
     optional tool calls leaves the LAN. No account credential is needed (the add-on holds it
     internally and gates the route on the same household-sharing opt-in).

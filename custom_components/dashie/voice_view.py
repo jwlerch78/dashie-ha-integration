@@ -6,7 +6,7 @@ token the device already holds, gets the account credential from the add-on and
 calls the brain on the account's behalf, returning the turn. The device then
 speaks the result and dispatches any HA action natively.
 
-This is the runtime gateway for WS3 (build plan §3.2). Reachable on-LAN and via
+This is the runtime gateway for WS3. Reachable on-LAN and via
 remote HA URLs because it rides HA's own :8123 API surface.
 
 HTTP endpoint:
@@ -73,11 +73,11 @@ ISSUE_STT_TOKEN_URL = "https://cwglbtosingboqepsmjk.supabase.co/functions/v1/iss
 GATEWAY_OWNED_KEYS = frozenset({"endpoint_id", "options", "client_fulfilled_tools"})
 
 #: `options` keys that are GATEWAY-INTERNAL — read here, never sent on. `route` selects
-#: cloud-vs-on-prem brain in THIS view (build plan §13.17); it is not a brain field, and the
+#: cloud-vs-on-prem brain in THIS view; it is not a brain field, and the
 #: lint asserts types.ts never declares one, which would make stripping it a contract break.
 GATEWAY_INTERNAL_OPTION_KEYS = frozenset({"route"})
 
-#: Transcript retention the gateway pins for EVERY caller (build plan §17). Deliberately not
+#: Transcript retention the gateway pins for EVERY caller. Deliberately not
 #: caller-overridable: 'server' would move family speech into Supabase. See §6 of the handoff.
 GATEWAY_RETAIN_MODE = "caller"
 
@@ -200,7 +200,7 @@ class DashieVoiceConverseView(HomeAssistantView):
         route_header = {"X-Dashie-Brain-Route": authoritative_route}
 
         # ── Route selection: cloud brain (default) vs on-prem add-on brain ─────
-        # Precedence (build plan §13.17):
+        # Precedence:
         #   1. explicit options.route — a per-request override (the kiosk dev toggle / harness),
         #   2. else the ACCOUNT's selected model — "My Local LLM" (ai.model=='local') → local.
         # (Execution precedence unchanged — the header above corrects the device for NEXT turn;
@@ -394,7 +394,7 @@ class DashieVoiceStatusView(HomeAssistantView):
 
 
 class DashieVoiceSessionView(HomeAssistantView):
-    """Vend a short-lived STT token bundle to an anonymous endpoint (build plan §3.2 WS2).
+    """Vend a short-lived STT token bundle to an anonymous endpoint (WS2).
 
     Authed by the HA token the tablet already holds. Gets the account credential from the
     add-on (gated on household-sharing), mints an STT-scoped token via `issue-stt-token`,

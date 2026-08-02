@@ -1,4 +1,4 @@
-"""HA-local voice transcript store for Dashie (build plan §17).
+"""HA-local voice transcript store for Dashie.
 
 When an account opts into transcript retention AND the turn runs in caller mode
 (anonymous kiosk via the voice gateway), the cloud brain persists NO transcript
