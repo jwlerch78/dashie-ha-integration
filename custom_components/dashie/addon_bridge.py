@@ -212,6 +212,20 @@ async def _discover_via_supervisor(session) -> list[str]:
             return []
         # Dev first (developer intent), then prod.
         matches.sort(key=lambda a: 0 if _is_dev_addon(a) else 1)
+        # 🔴 SAY WHICH ONE WON when there is a real choice (2026-08-20, T s42 cont.10).
+        # A box running both channels silently resolves DEV, and the device code a prod-flavor
+        # tablet minted lives in the PROD backend — so provisioning fails with "Device code not
+        # found", which names neither the choice nor the mismatch. It cost a diagnosis cycle.
+        # INFO, not debug: the whole problem is that this decision was invisible in a normal log.
+        # One candidate is the ordinary field case and stays quiet — noise here would be ignored.
+        if len(matches) > 1:
+            _LOGGER.info(
+                "multiple Dashie add-ons installed — preferring %s (dev-first); also found: %s. "
+                "If a device fails to provision with 'device code not found', check that the app "
+                "build targets the same environment as this add-on channel.",
+                matches[0].get("slug"),
+                ", ".join(a.get("slug") or "?" for a in matches[1:]),
+            )
         bases: list[str] = []
         for a in matches:
             slug = a.get("slug")
