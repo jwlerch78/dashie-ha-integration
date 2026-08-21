@@ -19,6 +19,7 @@ token instead of the raw account JWT to shrink the blast radius of a leaked secr
 from __future__ import annotations
 
 import glob
+import json
 import logging
 import os
 import time
@@ -467,11 +468,24 @@ async def authorize_device(hass: HomeAssistant, user_code: str) -> tuple[dict, i
                 timeout=_TIMEOUT,
             ) as resp:
                 status = resp.status
-                body = await resp.json(content_type=None)
+                raw = await resp.text()
         except Exception as e:  # noqa: BLE001
             last_err = str(e)
             continue
         _working_base = base
+        try:
+            body = json.loads(raw) if raw else None
+        except ValueError:
+            body = None
+        # Same silent-swallow shape that hid the converse-local stream bug. The RETURN is
+        # deliberately unchanged here — this is a device-authorization path and I have no
+        # A/B evidence for its callers — but rule 2 only requires the drop be LOUD, and an
+        # auth call that answers {} with no reason is the worst version of quiet.
+        if not isinstance(body, dict):
+            _LOGGER.warning(
+                "DROP: authorize_device got an unusable body — base=%s status=%s bytes=%d preview=%r",
+                base, status, len(raw or ""), (raw or "")[:300].replace("\n", "\\n"),
+            )
         return (body or {}, status)
 
     return ({"error": "addon_unavailable", "message": f"Dashie add-on unreachable: {last_err}"}, 503)
@@ -491,13 +505,24 @@ async def converse_local(hass: HomeAssistant, payload: dict) -> tuple[dict, int]
     session = async_get_clientsession(hass)
     bases = await _resolve_bases(session)
 
+    # 🔴 STRIP `stream`. This endpoint answers with ONE buffered JSON turn — the caller
+    # (voice_view's local-route branch) hands the result straight to web.json_response and
+    # has no NDJSON path, unlike the cloud branch which deliberately splits on body.stream.
+    # But the DEVICE sets stream:true on every turn (BrainConverseClient.kt), so it rode
+    # through to here: asked to stream, the add-on returns an SSE body, resp.json() yields
+    # None, and the `or {}` below turned that into an empty turn with HTTP 200. A/B'd by T
+    # on one field — {"text":…} returns a full valid turn, {"text":…,"stream":true} returns
+    # {} — so EVERY local-route turn from a real device was empty. Sending a flag this
+    # endpoint cannot honour is the bug; not forwarding it is the fix.
+    body_payload = {k: v for k, v in payload.items() if k != "stream"}
+
     last_err = "no candidates"
     for base in bases:
         url = f"{base}{_CONVERSE_LOCAL_PATH}"
         try:
-            async with session.post(url, json=payload, timeout=_BRAIN_TIMEOUT) as resp:
+            async with session.post(url, json=body_payload, timeout=_BRAIN_TIMEOUT) as resp:
                 status = resp.status
-                body = await resp.json(content_type=None) if status != 403 else None
+                raw = None if status == 403 else await resp.text()
         except Exception as err:  # noqa: BLE001
             last_err = f"{base}: {err}"
             continue
@@ -508,7 +533,31 @@ async def converse_local(hass: HomeAssistant, payload: dict) -> tuple[dict, int]
             raise SharingDisabled("household sharing disabled")
 
         _working_base = base
-        return (body or {}), status
+
+        try:
+            parsed = json.loads(raw) if raw else None
+        except ValueError:
+            parsed = None
+
+        # 🔴 Never `or {}` a failed parse (standing rule 2). The old code collapsed a
+        # non-JSON or error body into an empty dict and returned it as a 200 turn, capturing
+        # nothing: the integration logged no line, HA's error_log had no Dashie entry, and the
+        # only evidence anywhere was the DEVICE's blank-turn DROP. That silence is why the
+        # stream bug above cost a live debugging session. Say what came back instead.
+        if not isinstance(parsed, dict):
+            preview = (raw or "")[:300].replace("\n", "\\n")
+            _LOGGER.warning(
+                "DROP: converse-local returned a body we cannot use — base=%s status=%s "
+                "bytes=%d preview=%r",
+                base, status, len(raw or ""), preview,
+            )
+            return (
+                {"ok": False, "error": "converse_local_unparseable",
+                 "status": status, "body_preview": preview},
+                status if status >= 400 else 502,
+            )
+
+        return parsed, status
 
     raise AddonUnavailable(last_err)
 
@@ -540,12 +589,24 @@ async def mint_live_token(hass: HomeAssistant, model: str | None = None) -> tupl
         try:
             async with session.post(url, json=payload, timeout=_TIMEOUT) as resp:
                 status = resp.status
-                body = await resp.json(content_type=None)
+                raw = await resp.text()
         except Exception as err:  # noqa: BLE001
             last_err = f"{base}: {err}"
             continue
 
         _working_base = base
+        try:
+            body = json.loads(raw) if raw else None
+        except ValueError:
+            body = None
+        # As above: return shape left alone (token path, no A/B evidence), but the drop is
+        # no longer silent. A minted-token call that comes back {} otherwise presents to the
+        # caller as "no token" with nothing anywhere saying why.
+        if not isinstance(body, dict):
+            _LOGGER.warning(
+                "DROP: mint_live_token got an unusable body — base=%s status=%s bytes=%d preview=%r",
+                base, status, len(raw or ""), (raw or "")[:300].replace("\n", "\\n"),
+            )
         return (body or {}), status
 
     raise AddonUnavailable(last_err)
