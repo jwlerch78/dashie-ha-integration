@@ -442,13 +442,28 @@ class DashieCoordinator(DataUpdateCoordinator):
 
             url = f"{self.base_url}/"
             async with session.get(url, params=params) as response:
-                response.raise_for_status()
-                result = await response.json()
+                # Read the body before raising. The device answers a refused
+                # command with HTTP 400 and a structured
+                # {"status": "ERROR", "message": ...} payload. Calling
+                # raise_for_status() first throws that message away and the
+                # refusal is reported as a connection error instead.
+                try:
+                    result = await response.json(content_type=None)
+                except ValueError:
+                    result = None
 
-                # Check for error response
-                if result.get("status") == "ERROR":
-                    _LOGGER.error("Command %s failed: %s", command, result.get("message"))
+                if isinstance(result, dict) and result.get("status") == "ERROR":
+                    _LOGGER.error(
+                        "Command %s refused by %s: %s",
+                        command,
+                        self.host,
+                        result.get("message"),
+                    )
                     return False
+
+                # Still raise for a genuine transport failure, or any error
+                # status that did not carry a readable body.
+                response.raise_for_status()
 
                 _LOGGER.debug("Command %s sent successfully", command)
                 return True
