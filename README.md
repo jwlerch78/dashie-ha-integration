@@ -230,6 +230,15 @@ The integration can automatically resolve camera entity RTSP URLs for direct pla
 
 This allows tablets to play camera feeds via ExoPlayer without exposing camera credentials.
 
+## Frigate
+
+Frigate recordings and events reach tablets through the integration, so tablets never talk to Frigate directly. The integration finds Frigate by:
+
+1. Using the URL configured in the official [Frigate integration](https://github.com/blakeblackshear/frigate-hass-integration), if you have it set up. This is how a Frigate running on another machine (a NAS, a separate server) is found.
+2. Otherwise, trying the Frigate add-on's usual hostnames.
+
+The integration does not send Frigate credentials, so it needs Frigate's unauthenticated internal API port, **5000**. A Frigate reachable only on its authenticated port (8971) is not supported. If the Frigate integration points at a URL that does not answer, the log says so with a `DROP:` warning and the add-on hostnames are tried instead.
+
 ## Troubleshooting
 
 ### Device not discovered

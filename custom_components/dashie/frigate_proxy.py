@@ -2,7 +2,12 @@
 
 Proxies Frigate recording/event API calls through the HA integration so
 tablets don't need direct network access to the Frigate container. Handles
-auto-detection of the Frigate URL within the Docker network.
+auto-detection of the Frigate URL: the official Frigate integration's configured
+URL first, then the known add-on hostnames.
+
+The proxy sends no Frigate credentials, so it needs Frigate's unauthenticated
+internal API port (5000). An install reachable only on the authenticated port
+(8971) is not supported.
 
 Endpoints:
   GET /api/dashie/frigate/cameras
@@ -22,7 +27,8 @@ import aiohttp
 from aiohttp import web
 
 from homeassistant.components.http import HomeAssistantView
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, async_get_hass
+from homeassistant.exceptions import HomeAssistantError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,7 +67,8 @@ async def _detect_frigate() -> str | None:
         return _frigate_url
 
     session = await _get_session()
-    for url in _FRIGATE_CANDIDATES:
+    entry_urls = _frigate_integration_urls()
+    for url in [*entry_urls, *(u for u in _FRIGATE_CANDIDATES if u not in entry_urls)]:
         try:
             async with session.get(f"{url}/api/version", timeout=_TIMEOUT) as resp:
                 if resp.status == 200:
@@ -69,11 +76,35 @@ async def _detect_frigate() -> str | None:
                     _LOGGER.info("Found Frigate %s at %s", version.strip(), url)
                     _frigate_url = url
                     return url
-        except Exception:
-            continue
+                reason = f"HTTP {resp.status}"
+        except Exception as err:
+            reason = type(err).__name__
+        if url in entry_urls:
+            _LOGGER.warning(
+                "DROP: Frigate integration URL %s did not answer /api/version (%s); "
+                "the Dashie proxy needs Frigate's unauthenticated port 5000. "
+                "Trying the built-in candidates",
+                url, reason,
+            )
 
-    _LOGGER.warning("Frigate not found at any candidate URL: %s", _FRIGATE_CANDIDATES)
+    _LOGGER.warning("Frigate not found at any candidate URL: %s",
+                    [*entry_urls, *_FRIGATE_CANDIDATES])
     return None
+
+
+def _frigate_integration_urls() -> list[str]:
+    """URLs configured in the official Frigate integration, if it is set up."""
+    try:
+        hass = async_get_hass()
+    except HomeAssistantError:
+        _LOGGER.warning("DROP: no hass context; skipping Frigate integration URL lookup")
+        return []
+    urls = []
+    for entry in hass.config_entries.async_entries("frigate"):
+        url = str(entry.data.get("url") or "").rstrip("/")
+        if url and url not in urls:
+            urls.append(url)
+    return urls
 
 
 async def _proxy_json(request: web.Request, path: str, params: dict | None = None) -> web.Response:
