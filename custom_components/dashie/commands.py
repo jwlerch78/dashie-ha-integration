@@ -19,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING, Iterable
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 
 if TYPE_CHECKING:
     from .coordinator import DashieCoordinator
@@ -43,9 +44,19 @@ class CommandResult:
 
 
 def device_label(coordinator: DashieCoordinator) -> str:
-    """The name a user knows the device by."""
+    """The name a user knows the device by, as Home Assistant shows it.
+
+    The config entry title is often the hardware model, so two tablets of one model
+    would read the same; the device registry name (or the name the user gave it) does not.
+    """
     entry = coordinator.config_entry
-    return (entry.title if entry and entry.title else None) or coordinator.host
+    if entry:
+        for device in dr.async_entries_for_config_entry(dr.async_get(coordinator.hass), entry.entry_id):
+            if device.name_by_user or device.name:
+                return device.name_by_user or device.name
+        if entry.title:
+            return entry.title
+    return coordinator.host
 
 
 def failure_message(coordinator: DashieCoordinator, command: str, result: CommandResult) -> str:

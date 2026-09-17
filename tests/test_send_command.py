@@ -242,3 +242,34 @@ async def test_background_pushes_never_raise_and_log_once_per_change(coordinator
             mock.get(URL, exception=asyncio.TimeoutError(), repeat=True)
             await async_push_to_all([coordinator], "showTimer", what="timer")
         assert len(drops()) == 2, "a new failure after recovery must be logged again"
+
+
+async def test_failures_name_the_device_as_home_assistant_shows_it(hass: HomeAssistant):
+    """Two tablets of the same model share a config entry title; the messages must not."""
+    from homeassistant.helpers import device_registry as dr
+
+    from custom_components.dashie.commands import device_label
+
+    dev_reg = dr.async_get(hass)
+    coords = []
+    for n, (name, user_name) in enumerate([("Lerch Family Tablet", None), ("rk3576_u", "Mio 15")]):
+        entry = MockConfigEntry(domain="dashie", title="rk3576_u",
+                                data={"host": f"192.168.23.3{n}", "port": 2323})
+        entry.add_to_hass(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id, identifiers={("dashie", f"dev-{n}")}, name=name
+        )
+        if user_name:
+            dev_reg.async_update_device(device.id, name_by_user=user_name)
+        coords.append(DashieCoordinator(hass, f"192.168.23.3{n}", 2323, "", config_entry=entry))
+
+    assert device_label(coords[0]) == "Lerch Family Tablet"
+    assert device_label(coords[1]) == "Mio 15"  # the name the user gave wins
+
+
+async def test_label_falls_back_to_the_entry_title_then_the_host(hass: HomeAssistant, coordinator):
+    from custom_components.dashie.commands import device_label
+
+    assert device_label(coordinator) == "Kitchen Tablet"  # no device registered yet
+    bare = DashieCoordinator(hass, "192.168.23.99", 2323, "")
+    assert device_label(bare) == "192.168.23.99"
