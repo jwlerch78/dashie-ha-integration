@@ -78,7 +78,7 @@ class DashieBrightnessNumber(DashieEntity, NumberEntity):
         """Set the brightness level."""
         # Convert percentage (0-100) to 0-255 for the device
         brightness_value = round(value / 100 * 255)
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BRIGHTNESS,
             key="screenBrightness",
             value=str(brightness_value)
@@ -116,7 +116,7 @@ class DashieVolumeNumber(DashieEntity, NumberEntity):
         """Set the volume level."""
         # Convert 0-10 to 0-100 for the API
         api_volume = int(value) * 10
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_VOLUME,
             level=str(api_volume),
             stream="3"  # STREAM_MUSIC
@@ -157,7 +157,7 @@ class DashieZoomNumber(DashieEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the zoom level."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_STRING_SETTING,
             key=SETTING_ZOOM,
             value=str(int(value))

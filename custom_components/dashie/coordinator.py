@@ -12,6 +12,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .commands import NO_RESPONSE, REFUSED, CommandResult, DashieCommandError, failure_message
 from .const import DEFAULT_SCAN_INTERVAL, API_DEVICE_INFO, host_for_url
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +65,8 @@ class DashieCoordinator(DataUpdateCoordinator):
         self._trigger_unsub: list = []
         # Device identity (set by __init__.py from config entry)
         self.device_id: str | None = None
+        # Background push kinds currently failing, so each failure is logged once
+        self.push_failing: dict[str, bool] = {}
 
     @property
     def stored_pin(self) -> str:
@@ -432,7 +435,22 @@ class DashieCoordinator(DataUpdateCoordinator):
         )
 
     async def send_command(self, command: str, **kwargs) -> bool:
-        """Send a command to the Dashie device."""
+        """Send a command and report success as a bool, logging any failure.
+
+        Only for fire-and-forget callers. Entity actions and services use
+        async_command (or commands.async_send_to_all), which raise so the user sees
+        the failure; a test guards against new callers of this method.
+        """
+        return (await self.async_send(command, **kwargs)).ok
+
+    async def async_command(self, command: str, **kwargs) -> None:
+        """Send a command, raising DashieCommandError if it was refused or unanswered."""
+        result = await self.async_send(command, **kwargs)
+        if not result.ok:
+            raise DashieCommandError(failure_message(self, command, result))
+
+    async def async_send(self, command: str, **kwargs) -> CommandResult:
+        """Send a command to the Dashie device and describe the outcome."""
         try:
             session = await self._get_session()
             params = {"cmd": command}
@@ -459,20 +477,24 @@ class DashieCoordinator(DataUpdateCoordinator):
                         self.host,
                         result.get("message"),
                     )
-                    return False
+                    return CommandResult(False, REFUSED, str(result.get("message")))
 
                 # Still raise for a genuine transport failure, or any error
                 # status that did not carry a readable body.
                 response.raise_for_status()
 
                 _LOGGER.debug("Command %s sent successfully", command)
-                return True
+                return CommandResult(True)
         except asyncio.TimeoutError:
             _LOGGER.error("Timeout sending command %s to %s", command, self.host)
-            return False
+            return CommandResult(False, NO_RESPONSE, "TimeoutError")
+        except aiohttp.ClientResponseError as err:
+            # The device answered, with an error status and no readable message.
+            _LOGGER.error("Connection error sending command %s: %s", command, err)
+            return CommandResult(False, REFUSED, f"HTTP {err.status} {err.message}")
         except aiohttp.ClientError as err:
             _LOGGER.error("Connection error sending command %s: %s", command, err)
-            return False
+            return CommandResult(False, NO_RESPONSE, type(err).__name__)
         except Exception as err:
             _LOGGER.error("Failed to send command %s: %s", command, err)
-            return False
+            return CommandResult(False, NO_RESPONSE, type(err).__name__)

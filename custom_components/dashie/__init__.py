@@ -48,6 +48,7 @@ from .stream_proxy import register_stream_proxy_views
 from .stream_resolve import register_stream_resolve_views, set_go2rtc_manager
 from .go2rtc_manager import Go2RtcManager
 from .frigate_proxy import register_frigate_proxy_views
+from .commands import async_push_to_all, async_send_to_all
 from .service_targets import resolve_target_coordinators
 
 _LOGGER = logging.getLogger(__name__)
@@ -438,8 +439,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         """Send a command to a device."""
         command = call.data["command"]
         # device_id targets the named devices; omitted means every device.
-        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
-            await coordinator.send_command(command)
+        await async_send_to_all(resolve_target_coordinators(hass, call.data.get("device_id")), command)
 
     async def async_refresh_voice_config(call: ServiceCall) -> None:
         """Push a voice-config refresh to Dashie devices (anon-kiosk mirror).
@@ -457,55 +457,54 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         """
         addon_bridge.clear_credential_cache()
         # "refreshVoiceConfig" matches the DashieApiServer cmd on the device's 2323 API.
-        for coordinator in _get_all_coordinators():
-            await coordinator.send_command("refreshVoiceConfig")
+        await async_push_to_all(
+            _get_all_coordinators(), "refreshVoiceConfig", what="voice config refresh"
+        )
 
     async def async_load_url(call: ServiceCall) -> None:
         """Load a URL on a device."""
         url = call.data["url"]
-        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
-            await coordinator.send_command(API_LOAD_URL, url=url)
+        await async_send_to_all(resolve_target_coordinators(hass, call.data.get("device_id")), API_LOAD_URL, url=url)
 
     async def async_speak(call: ServiceCall) -> None:
         """Speak text on a device."""
         message = call.data["message"]
-        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
-            await coordinator.send_command(API_TEXT_TO_SPEECH, text=message)
+        await async_send_to_all(resolve_target_coordinators(hass, call.data.get("device_id")), API_TEXT_TO_SPEECH, text=message)
 
     async def async_set_brightness(call: ServiceCall) -> None:
         """Set brightness on a device."""
         brightness = call.data["brightness"]
         # Convert percentage to 0-255
         brightness_value = round(brightness / 100 * 255)
-        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
-            await coordinator.send_command(
-                API_SET_BRIGHTNESS,
-                key="screenBrightness",
-                value=str(brightness_value)
-            )
+        await async_send_to_all(
+            resolve_target_coordinators(hass, call.data.get("device_id")),
+            API_SET_BRIGHTNESS,
+            key="screenBrightness",
+            value=str(brightness_value)
+        )
 
     async def async_set_volume(call: ServiceCall) -> None:
         """Set volume on a device."""
         volume = call.data["volume"]
         # Convert 0-10 to 0-100 for API
         api_volume = volume * 10
-        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
-            await coordinator.send_command(
-                API_SET_VOLUME,
-                level=str(api_volume),
-                stream="3"
-            )
+        await async_send_to_all(
+            resolve_target_coordinators(hass, call.data.get("device_id")),
+            API_SET_VOLUME,
+            level=str(api_volume),
+            stream="3"
+        )
 
     async def async_show_message(call: ServiceCall) -> None:
         """Show an overlay message on a device."""
         message = call.data["message"]
         duration = call.data.get("duration", 3000)
-        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
-            await coordinator.send_command(
-                "setOverlayMessage",
-                text=message,
-                duration=str(duration)
-            )
+        await async_send_to_all(
+            resolve_target_coordinators(hass, call.data.get("device_id")),
+            "setOverlayMessage",
+            text=message,
+            duration=str(duration)
+        )
 
     # --- Internal Timer Management ---
     # Timers are managed internally (not using HA timer helpers)
@@ -611,26 +610,28 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     async def _send_timer_to_devices(timer: dict, action: str = "update") -> None:
         """Send timer state to all Dashie devices."""
         remaining = _calculate_remaining(timer)
-        for coordinator in _get_all_coordinators():
-            await coordinator.send_command(
-                "showTimer",
-                timerId=timer["id"],
-                slot=str(timer["slot"]),
-                label=timer["label"],
-                remaining=_format_duration(remaining),
-                remainingSeconds=str(remaining),
-                state=timer["state"],
-                action=action
-            )
+        await async_push_to_all(
+            _get_all_coordinators(),
+            "showTimer",
+            what="timer",
+            timerId=timer["id"],
+            slot=str(timer["slot"]),
+            label=timer["label"],
+            remaining=_format_duration(remaining),
+            remainingSeconds=str(remaining),
+            state=timer["state"],
+            action=action
+        )
 
     async def _hide_timer_from_devices(timer_id: str, slot: int) -> None:
         """Hide timer from all Dashie devices."""
-        for coordinator in _get_all_coordinators():
-            await coordinator.send_command(
-                "hideTimer",
-                timerId=timer_id,
-                slot=str(slot)
-            )
+        await async_push_to_all(
+            _get_all_coordinators(),
+            "hideTimer",
+            what="timer",
+            timerId=timer_id,
+            slot=str(slot)
+        )
 
     async def _timer_tick(now) -> None:
         """Called every second to update active timers."""
@@ -687,12 +688,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         if slot is None:
             _LOGGER.warning("All timer slots are in use (max %d)", MAX_TIMERS)
             # Notify devices that no slot is available
-            for coordinator in _get_all_coordinators():
-                await coordinator.send_command(
-                    "setOverlayMessage",
-                    text="All timer slots in use",
-                    duration="3000"
-                )
+            await async_push_to_all(
+                _get_all_coordinators(),
+                "setOverlayMessage",
+                what="timer",
+                text="All timer slots in use",
+                duration="3000"
+            )
             return
 
         # Create timer

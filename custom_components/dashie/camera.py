@@ -230,22 +230,22 @@ class DashieCamera(DashieEntity, Camera):
         self._stream_url = None
 
         # Persist the preference
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="true"
         )
         self.coordinator.update_local_data(rtspEnabled=True)
         # Start the server immediately
-        await self.coordinator.send_command(API_START_RTSP_STREAM)
+        await self.coordinator.async_command(API_START_RTSP_STREAM)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self) -> None:
         """Turn off the camera (stop RTSP stream)."""
         # Persist the preference
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="false"
         )
         # Stop the server immediately
-        await self.coordinator.send_command(API_STOP_RTSP_STREAM)
+        await self.coordinator.async_command(API_STOP_RTSP_STREAM)
         self._attr_is_streaming = False
         self._stream_url = None
         self.coordinator.update_local_data(rtspEnabled=False)

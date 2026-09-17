@@ -91,14 +91,13 @@ class DashieScreensaverModeSelect(DashieEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Set the screensaver mode."""
         mode = self._mode_api_map.get(option, option.lower())
-        success = await self.coordinator.send_command(API_SET_SCREENSAVER_MODE, mode=mode)
-        if success:
-            # Optimistic update so the UI reflects the new value immediately
-            # instead of waiting for the next coordinator poll. The next
-            # poll confirms it (and corrects if the device rejected).
-            if self.coordinator.data is not None:
-                self.coordinator.data["screensaverMode"] = mode
-                self.async_write_ha_state()
+        await self.coordinator.async_command(API_SET_SCREENSAVER_MODE, mode=mode)
+        # Optimistic update so the UI reflects the new value immediately
+        # instead of waiting for the next coordinator poll. A refused or
+        # unanswered command raised above, so this only runs on success.
+        if self.coordinator.data is not None:
+            self.coordinator.data["screensaverMode"] = mode
+            self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
 
 
@@ -182,7 +181,7 @@ class DashieScreensaverPhotoFolderSelect(DashieEntity, SelectEntity):
                     folder_path = folder["path"]
                     break
 
-        await self.coordinator.send_command(API_SET_HA_MEDIA_FOLDER, folder=folder_path)
+        await self.coordinator.async_command(API_SET_HA_MEDIA_FOLDER, folder=folder_path)
         await self.coordinator.async_request_refresh()
 
     async def async_update(self) -> None:
@@ -224,7 +223,7 @@ class DashieMotionWakeModeSelect(DashieEntity, SelectEntity):
             if value == option:
                 mode_key = key
                 break
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_STRING_SETTING, key=SETTING_MOTION_WAKE_MODE, value=mode_key
         )
         await self.coordinator.async_request_refresh()
@@ -260,7 +259,7 @@ class DashieScreenOffMethodSelect(DashieEntity, SelectEntity):
             if value == option:
                 method_key = key
                 break
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_SCREEN_OFF_METHOD, method=method_key
         )
         await self.coordinator.async_request_refresh()

@@ -85,7 +85,7 @@ class DashieMediaPlayer(DashieEntity, MediaPlayerEntity):
         # Play audio
         if media_type == MediaType.MUSIC:
             self._attr_media_content_type = MediaType.MUSIC
-            await self.coordinator.send_command(API_PLAY_SOUND, url=media_id)
+            await self.coordinator.async_command(API_PLAY_SOUND, url=media_id)
         else:
             raise HomeAssistantError(f"Unsupported media type {media_type}")
 
@@ -94,13 +94,13 @@ class DashieMediaPlayer(DashieEntity, MediaPlayerEntity):
 
     async def async_media_stop(self) -> None:
         """Stop playing media."""
-        await self.coordinator.send_command(API_STOP_SOUND)
+        await self.coordinator.async_command(API_STOP_SOUND)
         self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level, range 0..1."""
-        await self.coordinator.send_command(API_SET_VOLUME, level=int(volume * 100))
+        await self.coordinator.async_command(API_SET_VOLUME, level=int(volume * 100))
         self._attr_volume_level = volume
         self.async_write_ha_state()
 

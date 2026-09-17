@@ -79,7 +79,7 @@ class DashieDashboardUrlText(DashieEntity, TextEntity):
     async def async_set_value(self, value: str) -> None:
         """Set the dashboard URL."""
         if value:
-            await self.coordinator.send_command(
+            await self.coordinator.async_command(
                 API_SET_STRING_SETTING, key=SETTING_HA_URL, value=value
             )
             await self.coordinator.async_request_refresh()
@@ -115,7 +115,7 @@ class DashieLoadUrlText(DashieEntity, TextEntity):
     async def async_set_value(self, value: str) -> None:
         """Navigate the HA iframe to the given URL."""
         if value:
-            await self.coordinator.send_command(API_LOAD_URL, url=value)
+            await self.coordinator.async_command(API_LOAD_URL, url=value)
             await self.coordinator.async_request_refresh()
 
 
@@ -153,21 +153,21 @@ class DashiePinText(DashieEntity, TextEntity):
         if value == "****":
             _LOGGER.info("Clearing PIN (masked value submitted)")
             self.coordinator.set_stored_pin("")  # Clear stored PIN
-            await self.coordinator.send_command(API_CLEAR_PIN)
+            await self.coordinator.async_command(API_CLEAR_PIN)
             # Optimistically update local state for immediate UI feedback
             self.coordinator.update_local_data(hasPinSet=False)
         elif value and len(value) == 4 and value.isdigit():
             # Set the PIN to a new 4-digit value
             _LOGGER.info("Setting new PIN")
             self.coordinator.set_stored_pin(value)  # Store PIN for unlocking
-            await self.coordinator.send_command(API_SET_PIN, pin=value)
+            await self.coordinator.async_command(API_SET_PIN, pin=value)
             # Optimistically update local state for immediate UI feedback
             self.coordinator.update_local_data(hasPinSet=True)
         else:
             # Clear the PIN (empty or invalid = clear)
             _LOGGER.info("Clearing PIN (value: '%s')", value)
             self.coordinator.set_stored_pin("")  # Clear stored PIN
-            await self.coordinator.send_command(API_CLEAR_PIN)
+            await self.coordinator.async_command(API_CLEAR_PIN)
             # Optimistically update local state for immediate UI feedback
             self.coordinator.update_local_data(hasPinSet=False)
         await self.coordinator.async_request_refresh()

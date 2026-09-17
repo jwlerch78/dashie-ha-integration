@@ -106,12 +106,12 @@ class DashieScreenSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the screen on (wake from black/off state)."""
-        await self.coordinator.send_command(API_SCREEN_ON)
+        await self.coordinator.async_command(API_SCREEN_ON)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the screen off."""
-        await self.coordinator.send_command(API_SCREEN_OFF)
+        await self.coordinator.async_command(API_SCREEN_OFF)
         await self.coordinator.async_request_refresh()
 
     @property
@@ -149,12 +149,12 @@ class DashieScreensaverSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start the screensaver."""
-        await self.coordinator.send_command(API_START_SCREENSAVER)
+        await self.coordinator.async_command(API_START_SCREENSAVER)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop the screensaver."""
-        await self.coordinator.send_command(API_STOP_SCREENSAVER)
+        await self.coordinator.async_command(API_STOP_SCREENSAVER)
         await self.coordinator.async_request_refresh()
 
 
@@ -180,12 +180,12 @@ class DashieLockSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Lock the kiosk."""
-        await self.coordinator.send_command(API_LOCK_KIOSK)
+        await self.coordinator.async_command(API_LOCK_KIOSK)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Unlock the kiosk (API password is authentication, PIN not required)."""
-        await self.coordinator.send_command(API_UNLOCK_KIOSK)
+        await self.coordinator.async_command(API_UNLOCK_KIOSK)
         await self.coordinator.async_request_refresh()
 
 
@@ -228,12 +228,12 @@ class DashieDarkModeSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable dark mode."""
-        await self.coordinator.send_command(API_SET_DARK_MODE, value="true")
+        await self.coordinator.async_command(API_SET_DARK_MODE, value="true")
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable dark mode."""
-        await self.coordinator.send_command(API_SET_DARK_MODE, value="false")
+        await self.coordinator.async_command(API_SET_DARK_MODE, value="false")
         await self.coordinator.async_request_refresh()
 
 
@@ -265,14 +265,14 @@ class DashieHideSidebarSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Hide the sidebar."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_HIDE_SIDEBAR, value="true"
         )
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Show the sidebar."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_HIDE_SIDEBAR, value="false"
         )
         await self.coordinator.async_request_refresh()
@@ -301,14 +301,14 @@ class DashieHideTabsSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Hide the tabs/header."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_HIDE_HEADER, value="true"
         )
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Show the tabs/header."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_HIDE_HEADER, value="false"
         )
         await self.coordinator.async_request_refresh()
@@ -342,14 +342,14 @@ class DashieKeepScreenOnSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable keep screen on."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_KEEP_SCREEN_ON, value="true"
         )
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable keep screen on."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_KEEP_SCREEN_ON, value="false"
         )
         await self.coordinator.async_request_refresh()
@@ -388,22 +388,20 @@ class DashieAutoBrightnessSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable auto brightness."""
-        success = await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_AUTO_BRIGHTNESS, value="true"
         )
-        if success:
-            # Optimistic update for immediate UI feedback
-            self.coordinator.update_local_data(autoBrightness=True)
+        # Optimistic update for immediate UI feedback (a failed command raised above)
+        self.coordinator.update_local_data(autoBrightness=True)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable auto brightness."""
-        success = await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_AUTO_BRIGHTNESS, value="false"
         )
-        if success:
-            # Optimistic update for immediate UI feedback
-            self.coordinator.update_local_data(autoBrightness=False)
+        # Optimistic update for immediate UI feedback (a failed command raised above)
+        self.coordinator.update_local_data(autoBrightness=False)
         await self.coordinator.async_request_refresh()
 
 
@@ -435,14 +433,14 @@ class DashieStartOnBootSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable start on boot."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_START_ON_BOOT, value="true"
         )
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable start on boot."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_START_ON_BOOT, value="false"
         )
         await self.coordinator.async_request_refresh()
@@ -486,19 +484,19 @@ class DashieRtspStreamSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start RTSP streaming."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="true"
         )
         self.coordinator.update_local_data(rtspEnabled=True)
-        await self.coordinator.send_command(API_START_RTSP_STREAM)
+        await self.coordinator.async_command(API_START_RTSP_STREAM)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop RTSP streaming."""
-        await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_ENABLED, value="false"
         )
-        await self.coordinator.send_command(API_STOP_RTSP_STREAM)
+        await self.coordinator.async_command(API_STOP_RTSP_STREAM)
         self.coordinator.update_local_data(rtspEnabled=False)
         await self.coordinator.async_request_refresh()
 
@@ -531,18 +529,16 @@ class DashieSoftwareEncodingSwitch(DashieEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable software encoding."""
-        success = await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_SOFTWARE_ENCODING, value="true"
         )
-        if success:
-            self.coordinator.update_local_data(rtspSoftwareEncoding=True)
+        self.coordinator.update_local_data(rtspSoftwareEncoding=True)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable software encoding (use hardware encoding)."""
-        success = await self.coordinator.send_command(
+        await self.coordinator.async_command(
             API_SET_BOOLEAN_SETTING, key=SETTING_RTSP_SOFTWARE_ENCODING, value="false"
         )
-        if success:
-            self.coordinator.update_local_data(rtspSoftwareEncoding=False)
+        self.coordinator.update_local_data(rtspSoftwareEncoding=False)
         await self.coordinator.async_request_refresh()

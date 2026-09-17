@@ -60,7 +60,7 @@ class DashieReloadButton(DashieEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Reload the dashboard."""
-        await self.coordinator.send_command(API_LOAD_START_URL)
+        await self.coordinator.async_command(API_LOAD_START_URL)
 
 
 class DashieForegroundButton(DashieEntity, ButtonEntity):
@@ -77,7 +77,7 @@ class DashieForegroundButton(DashieEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Bring app to foreground."""
-        await self.coordinator.send_command(API_BRING_TO_FOREGROUND)
+        await self.coordinator.async_command(API_BRING_TO_FOREGROUND)
 
 
 # =============================================================================
@@ -100,7 +100,7 @@ class DashieRefreshWebViewButton(DashieEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Refresh the WebView (navigate away and back to release memory)."""
-        await self.coordinator.send_command(API_REFRESH_WEBVIEW)
+        await self.coordinator.async_command(API_REFRESH_WEBVIEW)
 
 
 class DashieRestartButton(DashieEntity, ButtonEntity):
@@ -118,7 +118,7 @@ class DashieRestartButton(DashieEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Restart the app."""
-        await self.coordinator.send_command(API_RESTART_APP)
+        await self.coordinator.async_command(API_RESTART_APP)
 
 
 class DashieRebootButton(DashieEntity, ButtonEntity):
@@ -136,7 +136,7 @@ class DashieRebootButton(DashieEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Reboot the device."""
-        await self.coordinator.send_command(API_REBOOT_DEVICE)
+        await self.coordinator.async_command(API_REBOOT_DEVICE)
 
 
 class DashieClearCacheButton(DashieEntity, ButtonEntity):
@@ -154,7 +154,7 @@ class DashieClearCacheButton(DashieEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Clear the WebView cache."""
-        await self.coordinator.send_command(API_CLEAR_CACHE)
+        await self.coordinator.async_command(API_CLEAR_CACHE)
 
 
 class DashieClearStorageButton(DashieEntity, ButtonEntity):
@@ -172,4 +172,4 @@ class DashieClearStorageButton(DashieEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Clear the WebView local storage."""
-        await self.coordinator.send_command(API_CLEAR_WEBSTORAGE)
+        await self.coordinator.async_command(API_CLEAR_WEBSTORAGE)
