@@ -22,6 +22,12 @@ reproduce the failure modes we hit in the field without any hardware:
   # Advertise IPv6 alongside IPv4 — reproduces the dual-stack discovery case
   python3 fake_dashie_device.py --ipv6 fc00::1234
 
+  # Refuse a command — the device answers, saying no. This is the failure the
+  # integration used to report as success, so it is what proves an action now
+  # raises with the device's own reason.
+  python3 fake_dashie_device.py \
+      --refuse rebootDevice='Reboot failed: requires root or system app'
+
 Requires `zeroconf` for mDNS discovery (pip install zeroconf); without it the
 server still runs and you can add it manually by IP in HA.
 """
@@ -123,12 +129,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"running": False, "clients": 0})
         if cmd == "getRtspConfig":
             return self._json({"width": 1280, "height": 720, "fps": 15, "port": 8554})
+        # A refused control command: the device answers HTTP 400 with a
+        # structured {"status": "ERROR", "message": ...} body, which is what
+        # the coordinator reads to tell a refusal from a transport failure.
+        if cmd in ARGS.refuse:
+            message = ARGS.refuse[cmd]
+            print(f"[fake-device] REFUSING {cmd}: {message} (fault injected)")
+            return self._json({"status": "ERROR", "message": message}, status=400)
+
         # Any control command (screenOn, setBrightness, …) → OK.
         return self._json({"status": "OK", "cmd": cmd})
 
-    def _json(self, obj: dict):
+    def _json(self, obj: dict, status: int = 200):
         body = json.dumps(obj).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -182,6 +196,11 @@ def main():
     p.add_argument("--fail-first", type=int, default=0, help="hang the first N deviceInfo polls, then recover")
     p.add_argument("--fail-rate", type=float, default=0, help="randomly hang this fraction of polls (0-1)")
     p.add_argument("--down-cycle", default=None, help="UP/DOWN seconds, e.g. 30/15 — alternate healthy/hung windows")
+    p.add_argument(
+        "--refuse", action="append", default=[], metavar="CMD[=MESSAGE]",
+        help="refuse this command with HTTP 400 + {status:ERROR,message} (repeatable), "
+             "e.g. --refuse rebootDevice='Reboot failed: requires root or system app'",
+    )
     p.add_argument("--ipv6", default=None, help="also advertise this IPv6 address (first), to test dual-stack discovery")
     p.add_argument("--no-mdns", action="store_true", help="serve HTTP only; add manually by IP in HA")
     ARGS = p.parse_args()
@@ -189,6 +208,10 @@ def main():
     if ARGS.down_cycle:
         up, down = ARGS.down_cycle.split("/")
         ARGS.down_cycle = (float(up), float(down))
+    ARGS.refuse = dict(
+        spec.split("=", 1) if "=" in spec else (spec, "Command failed")
+        for spec in ARGS.refuse
+    )
     if not ARGS.host_ip:
         ARGS.host_ip = _local_ipv4()
 
@@ -201,6 +224,7 @@ def main():
         f"fail-first={ARGS.fail_first}" if ARGS.fail_first else "",
         f"fail-rate={ARGS.fail_rate}" if ARGS.fail_rate else "",
         f"down-cycle={ARGS.down_cycle}" if ARGS.down_cycle else "",
+        f"refuse={sorted(ARGS.refuse)}" if ARGS.refuse else "",
     ) if f]
     print(f"[fake-device] faults: {', '.join(faults) if faults else 'none (healthy)'}")
     try:
