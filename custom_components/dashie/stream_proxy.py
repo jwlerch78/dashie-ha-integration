@@ -82,7 +82,7 @@ class DashieMjpegStreamView(HomeAssistantView):
 
     url = "/api/dashie/stream/mjpeg/{entity_id:.*}"
     name = "api:dashie:stream:mjpeg"
-    requires_auth = False  # TODO: restore to True after browser testing
+    requires_auth = True
 
     async def get(self, request: web.Request, entity_id: str) -> web.StreamResponse:
         """Handle MJPEG stream request."""
@@ -934,7 +934,7 @@ class DashieSnapshotView(HomeAssistantView):
 
     url = "/api/dashie/stream/snapshot/{entity_id:.*}"
     name = "api:dashie:stream:snapshot"
-    requires_auth = False  # Matches DashieMjpegStreamView for browser testing
+    requires_auth = True
 
     async def get(self, request: web.Request, entity_id: str) -> web.Response:
         hass: HomeAssistant = request.app["hass"]
