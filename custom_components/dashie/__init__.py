@@ -48,6 +48,7 @@ from .stream_proxy import register_stream_proxy_views
 from .stream_resolve import register_stream_resolve_views, set_go2rtc_manager
 from .go2rtc_manager import Go2RtcManager
 from .frigate_proxy import register_frigate_proxy_views
+from .service_targets import resolve_target_coordinators
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -436,16 +437,9 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     async def async_send_command(call: ServiceCall) -> None:
         """Send a command to a device."""
         command = call.data["command"]
-        device_id = call.data.get("device_id")
-
-        # If device_id specified, send to that device only
-        if device_id:
-            for coordinator in _get_all_coordinators():
-                await coordinator.send_command(command)
-        else:
-            # Send to all devices
-            for coordinator in _get_all_coordinators():
-                await coordinator.send_command(command)
+        # device_id targets the named devices; omitted means every device.
+        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
+            await coordinator.send_command(command)
 
     async def async_refresh_voice_config(call: ServiceCall) -> None:
         """Push a voice-config refresh to Dashie devices (anon-kiosk mirror).
@@ -469,13 +463,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     async def async_load_url(call: ServiceCall) -> None:
         """Load a URL on a device."""
         url = call.data["url"]
-        for coordinator in _get_all_coordinators():
+        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
             await coordinator.send_command(API_LOAD_URL, url=url)
 
     async def async_speak(call: ServiceCall) -> None:
         """Speak text on a device."""
         message = call.data["message"]
-        for coordinator in _get_all_coordinators():
+        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
             await coordinator.send_command(API_TEXT_TO_SPEECH, text=message)
 
     async def async_set_brightness(call: ServiceCall) -> None:
@@ -483,7 +477,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         brightness = call.data["brightness"]
         # Convert percentage to 0-255
         brightness_value = round(brightness / 100 * 255)
-        for coordinator in _get_all_coordinators():
+        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
             await coordinator.send_command(
                 API_SET_BRIGHTNESS,
                 key="screenBrightness",
@@ -495,7 +489,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         volume = call.data["volume"]
         # Convert 0-10 to 0-100 for API
         api_volume = volume * 10
-        for coordinator in _get_all_coordinators():
+        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
             await coordinator.send_command(
                 API_SET_VOLUME,
                 level=str(api_volume),
@@ -506,7 +500,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         """Show an overlay message on a device."""
         message = call.data["message"]
         duration = call.data.get("duration", 3000)
-        for coordinator in _get_all_coordinators():
+        for coordinator in resolve_target_coordinators(hass, call.data.get("device_id")):
             await coordinator.send_command(
                 "setOverlayMessage",
                 text=message,
