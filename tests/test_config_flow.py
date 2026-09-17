@@ -12,6 +12,8 @@ These reproduce the real field failures we hit in June 2026:
 the aiohttp layer with ``aioresponses`` (HA's ``aioclient_mock`` only covers the
 shared session).
 """
+import asyncio
+import logging
 from ipaddress import ip_address
 from unittest.mock import patch
 
@@ -124,3 +126,27 @@ async def test_user_flow_already_configured_not_cannot_connect(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def test_a_timeout_is_logged_with_what_went_wrong(hass: HomeAssistant, caplog) -> None:
+    """A setup failure must say WHAT failed, even when the error has no message.
+
+    A reporter's log read ``Failed to fetch device info:`` with nothing after the colon:
+    ``str(asyncio.TimeoutError())`` is empty, so the one line that explains the abort
+    named neither the cause nor its type, and the abort itself only says
+    "cannot connect". The type has to be in the line.
+    """
+    with caplog.at_level(logging.ERROR, logger="custom_components.dashie.config_flow"):
+        with aioresponses() as mock:
+            mock.get(DEVICE_URL, exception=asyncio.TimeoutError(), repeat=True)
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": config_entries.SOURCE_ZEROCONF},
+                data=_mat_zeroconf(),
+            )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "cannot_connect"  # control: the abort reason is unchanged
+    failures = [r.getMessage() for r in caplog.records if "Failed to fetch device info" in r.getMessage()]
+    assert failures, "the abort was not logged at all"
+    assert "TimeoutError" in failures[-1], f"the log does not say what failed: {failures[-1]!r}"

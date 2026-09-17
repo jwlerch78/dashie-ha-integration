@@ -165,7 +165,9 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_password()
             raise
         except Exception as err:
-            _LOGGER.error("❌ Failed to fetch device info: %s", err)
+            # Name the type: a TimeoutError's str() is empty, and this line was the
+            # only explanation of the abort a user could see.
+            _LOGGER.error("❌ Failed to fetch device info: %s: %s", type(err).__name__, err)
             return self.async_abort(reason="cannot_connect")
 
         _LOGGER.debug("❌ Aborting: No deviceID in response")
@@ -416,7 +418,11 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
                         errors["base"] = "invalid_auth"
                     else:
                         errors["base"] = "cannot_connect"
-                except Exception:
+                except Exception as err:
+                    _LOGGER.error(
+                        "Options re-test failed (host=%s port=%s): %s: %s",
+                        host, new_port, type(err).__name__, err,
+                    )
                     errors["base"] = "cannot_connect"
 
             if not errors:

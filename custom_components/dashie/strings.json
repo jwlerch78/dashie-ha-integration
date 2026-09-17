@@ -17,7 +17,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to device",
+      "cannot_connect": "Cannot connect to the device. Check that the Dashie app is open and its API is enabled, and that the port is right (default 2323).",
       "invalid_auth": "Invalid password - make sure it matches the password set in Dashie"
     }
   },
@@ -55,10 +55,10 @@
       "already_configured": "Device is already configured",
       "no_location": "No location in SSDP response",
       "no_device_id": "Could not get device ID",
-      "cannot_connect": "Cannot connect to device"
+      "cannot_connect": "Cannot connect to the device. Check that the Dashie app is open and its API is enabled, and that the port is right (default 2323)."
     },
     "error": {
-      "cannot_connect": "Cannot connect to device",
+      "cannot_connect": "Cannot connect to the device. Check that the Dashie app is open and its API is enabled, and that the port is right (default 2323).",
       "no_device_id": "Could not get device ID",
       "invalid_auth": "Invalid password"
     }
