@@ -45,3 +45,11 @@ def _skip_stream_dependency(hass):
     config flow, so mark it already set up to skip its dependency setup."""
     hass.config.components.add("stream")
     yield
+
+
+@pytest.fixture(autouse=True)
+def _skip_conversation_dependency(hass):
+    """The manifest also depends on `conversation`, which pulls in HA core
+    components these tests never set up; mark it set up for the same reason."""
+    hass.config.components.add("conversation")
+    yield
