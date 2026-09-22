@@ -42,6 +42,10 @@ _FRIGATE_CANDIDATES = [
 
 # Shared session + detected URL (module-level, set on first successful probe)
 _frigate_url: str | None = None
+# D-101: a household that will never run Frigate must not be told so every 30s.
+# The miss is worth ONE loud line per process; after that it is debug. Reset on a
+# successful detect so a Frigate that appears and later vanishes warns again.
+_not_found_warned: bool = False
 _session: aiohttp.ClientSession | None = None
 _TIMEOUT = aiohttp.ClientTimeout(total=10, connect=5)
 _STREAM_TIMEOUT = aiohttp.ClientTimeout(total=300, connect=5)  # Clips can be long
@@ -62,7 +66,7 @@ async def _detect_frigate() -> str | None:
     `_frigate_url = None` to force a re-probe (see feed_registry._get_frigate_camera_names
     for the self-heal path).
     """
-    global _frigate_url
+    global _frigate_url, _not_found_warned
     if _frigate_url:
         return _frigate_url
 
@@ -75,6 +79,7 @@ async def _detect_frigate() -> str | None:
                     version = await resp.text()
                     _LOGGER.info("Found Frigate %s at %s", version.strip(), url)
                     _frigate_url = url
+                    _not_found_warned = False
                     return url
                 reason = f"HTTP {resp.status}"
         except Exception as err:
@@ -87,8 +92,11 @@ async def _detect_frigate() -> str | None:
                 url, reason,
             )
 
-    _LOGGER.warning("Frigate not found at any candidate URL: %s",
-                    [*entry_urls, *_FRIGATE_CANDIDATES])
+    # Loud once, quiet after — see _not_found_warned.
+    log = _LOGGER.debug if _not_found_warned else _LOGGER.warning
+    log("Frigate not found at any candidate URL: %s",
+        [*entry_urls, *_FRIGATE_CANDIDATES])
+    _not_found_warned = True
     return None
 
 

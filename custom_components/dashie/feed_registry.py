@@ -409,10 +409,14 @@ _frigate_camera_cache: list[str] | None = None
 _frigate_cache_time: float = 0
 # Long TTL for successful (non-empty) camera list — cameras don't change often.
 _FRIGATE_CACHE_TTL = 300  # 5 minutes
-# Short TTL when the last probe returned empty — avoids being stuck at an empty
-# list for 5 minutes when Frigate was briefly unreachable (container restart,
-# URL stale, etc.). Previously the fix required a HA restart to clear.
-_FRIGATE_EMPTY_CACHE_TTL = 30  # 30 seconds
+# D-101: this used to be 30s "short enough to self-heal once Frigate is reachable
+# again" — sound for a Frigate that is briefly down, but it made ABSENCE re-probe
+# 10x more often than PRESENCE, so a household that will never run Frigate paid
+# four failed connects and a log line every 30 seconds, forever. Absence is now
+# cached exactly as long as presence. A Frigate that WAS working and fails still
+# self-heals promptly: the error path below clears frigate_proxy._frigate_url, which
+# forces a full re-probe on the next call regardless of this TTL.
+_FRIGATE_EMPTY_CACHE_TTL = _FRIGATE_CACHE_TTL  # 5 minutes, same as success
 
 
 async def _get_frigate_camera_names() -> list[str]:
