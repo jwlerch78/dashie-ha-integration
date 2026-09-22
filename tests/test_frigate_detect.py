@@ -121,6 +121,7 @@ async def test_absence_is_not_cached_more_briefly_than_presence(hass, frigate, m
 
     monkeypatch.setattr(feed_registry, "_frigate_camera_cache", None)
     monkeypatch.setattr(feed_registry, "_frigate_cache_time", 0.0)
+    monkeypatch.setattr(feed_registry, "_frigate_ever_found", False)
     frigate.get(f"{CANDIDATE}/api/version", exc=OSError("no route to host"))
 
     probes = {"n": 0}
@@ -143,3 +144,67 @@ async def test_absence_is_not_cached_more_briefly_than_presence(hass, frigate, m
         "absence was re-probed within 60s while presence is cached for 300s — "
         f"the empty TTL is still shorter than the success TTL ({probes['n']} probes)"
     )
+
+
+async def test_a_frigate_that_breaks_still_self_heals_despite_the_longer_ttl(hass, frigate, monkeypatch):
+    """The regression D-101's fix could plausibly cause, pinned.
+
+    Raising the empty-result TTL from 30s to 300s is only safe because a Frigate
+    that WAS working and then fails clears `frigate_proxy._frigate_url` on the
+    error path, forcing a full re-probe on the next call regardless of this TTL.
+    That reasoning was load-bearing and untested, so: break a working Frigate and
+    assert the very next call re-probes rather than serving a stale empty list for
+    five minutes.
+    """
+    from custom_components.dashie import feed_registry
+
+    monkeypatch.setattr(feed_registry, "_frigate_camera_cache", None)
+    monkeypatch.setattr(feed_registry, "_frigate_cache_time", 0.0)
+    monkeypatch.setattr(feed_registry, "_frigate_ever_found", False)
+
+    now = {"t": 2_000_000.0}
+    monkeypatch.setattr(feed_registry.time, "time", lambda: now["t"])
+
+    # 1. Frigate is up and answers /api/config — cameras are cached for the long TTL.
+    frigate.get(f"{CANDIDATE}/api/version", text="0.14.1")
+    frigate.get(f"{CANDIDATE}/api/config", json={"cameras": {"pool": {}, "porch": {}}})
+    assert await feed_registry._get_frigate_camera_names() == ["pool", "porch"]
+    assert frigate_proxy._frigate_url == CANDIDATE
+
+    # 2. Frigate breaks. Past the long TTL so the cache is consulted and re-fetched.
+    frigate.clear_requests()
+    frigate.get(f"{CANDIDATE}/api/version", exc=OSError("container gone"))
+    frigate.get(f"{CANDIDATE}/api/config", exc=OSError("container gone"))
+    now["t"] += _long_ttl(feed_registry) + 1
+    assert await feed_registry._get_frigate_camera_names() == []
+
+    # The failed fetch must have invalidated the cached URL — that is the self-heal.
+    assert frigate_proxy._frigate_url is None, (
+        "a failed camera fetch must clear the cached Frigate URL so the next call "
+        "re-probes; without this the longer empty-TTL would strand a recovered Frigate"
+    )
+
+    # 3. Frigate comes back. It must be picked up on the SHORT (lost) TTL, which is
+    #    what the pre-D-101 code gave, and NOT be stranded for the long absent TTL.
+    frigate.clear_requests()
+    frigate.get(f"{CANDIDATE}/api/version", text="0.14.1")
+    frigate.get(f"{CANDIDATE}/api/config", json={"cameras": {"pool": {}}})
+
+    now["t"] += feed_registry._FRIGATE_LOST_TTL - 1  # still inside the lost TTL
+    assert await feed_registry._get_frigate_camera_names() == [], (
+        "inside the lost TTL the cached empty list is still the right answer"
+    )
+
+    now["t"] += 2  # now past it
+    assert await feed_registry._get_frigate_camera_names() == ["pool"], (
+        "a Frigate that was working, broke and recovered must come back on the SHORT "
+        "lost TTL, not be stranded for the long never-found TTL"
+    )
+
+    assert feed_registry._FRIGATE_LOST_TTL < feed_registry._FRIGATE_ABSENT_TTL, (
+        "the whole point of D-101 is that these two cases are NOT the same case"
+    )
+
+
+def _long_ttl(feed_registry):
+    return feed_registry._FRIGATE_CACHE_TTL

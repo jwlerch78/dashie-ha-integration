@@ -409,25 +409,37 @@ _frigate_camera_cache: list[str] | None = None
 _frigate_cache_time: float = 0
 # Long TTL for successful (non-empty) camera list — cameras don't change often.
 _FRIGATE_CACHE_TTL = 300  # 5 minutes
-# D-101: this used to be 30s "short enough to self-heal once Frigate is reachable
-# again" — sound for a Frigate that is briefly down, but it made ABSENCE re-probe
-# 10x more often than PRESENCE, so a household that will never run Frigate paid
-# four failed connects and a log line every 30 seconds, forever. Absence is now
-# cached exactly as long as presence. A Frigate that WAS working and fails still
-# self-heals promptly: the error path below clears frigate_proxy._frigate_url, which
-# forces a full re-probe on the next call regardless of this TTL.
-_FRIGATE_EMPTY_CACHE_TTL = _FRIGATE_CACHE_TTL  # 5 minutes, same as success
+# D-101. The empty-result TTL used to be a flat 30s, "short enough to self-heal once
+# Frigate is reachable again" — sound for a Frigate that is briefly down, but it made
+# ABSENCE re-probe 10x more often than PRESENCE, so a household that will NEVER run
+# Frigate paid four failed connects and a log line every 30 seconds, forever.
+#
+# The two cases are not the same case, which is what the flat value missed:
+#   - never found        -> absence is the steady state; cache it as long as presence.
+#   - found, now failing -> a restart or a moved container; recover fast.
+#
+# ⚠️ Do NOT collapse these back into one constant. A first attempt at this fix set the
+# empty TTL to _FRIGATE_CACHE_TTL on the reasoning that clearing frigate_proxy._frigate_url
+# on the error path forces a re-probe. It does not: _get_frigate_camera_names consults THIS
+# cache and returns before it ever calls _detect_frigate, so a recovered Frigate was stranded
+# for the full 5 minutes. A regression test pins it.
+_FRIGATE_ABSENT_TTL = _FRIGATE_CACHE_TTL  # never found: as long as presence
+_FRIGATE_LOST_TTL = 30  # found before, failing now: recover fast
+_frigate_ever_found: bool = False
 
 
 async def _get_frigate_camera_names() -> list[str]:
     """Fetch camera names from Frigate, with caching."""
-    global _frigate_camera_cache, _frigate_cache_time
+    global _frigate_camera_cache, _frigate_cache_time, _frigate_ever_found
     from .frigate_proxy import _detect_frigate, _get_session, _TIMEOUT
 
     now = time.time()
     if _frigate_camera_cache is not None:
         age = now - _frigate_cache_time
-        ttl = _FRIGATE_CACHE_TTL if _frigate_camera_cache else _FRIGATE_EMPTY_CACHE_TTL
+        if _frigate_camera_cache:
+            ttl = _FRIGATE_CACHE_TTL
+        else:
+            ttl = _FRIGATE_LOST_TTL if _frigate_ever_found else _FRIGATE_ABSENT_TTL
         if age < ttl:
             return _frigate_camera_cache
 
@@ -448,6 +460,8 @@ async def _get_frigate_camera_names() -> list[str]:
                 cameras = list(config.get("cameras", {}).keys())
                 _frigate_camera_cache = cameras
                 _frigate_cache_time = now
+                if cameras:
+                    _frigate_ever_found = True
                 _LOGGER.info("Frigate cameras refreshed: %s", cameras)
                 return cameras
             else:
