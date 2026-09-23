@@ -91,8 +91,19 @@ async def test_unreachable_entry_falls_back_and_says_why(hass, frigate, caplog):
 # self-heal") — it optimises for the rare case and bills the common one.
 
 
-async def test_repeated_misses_warn_once_not_every_probe(hass, frigate, caplog):
-    """A box that will never have Frigate must not warn on every probe, forever."""
+async def test_no_frigate_configured_never_warns_at_all(hass, frigate, caplog):
+    """A household with no Frigate must produce NO warning, not even one.
+
+    John, 2026-09-23: "If someone has no Frigate at all I feel like we shouldn't be
+    throwing errors." Home Assistant renders a WARNING from a custom integration as
+    "This error originated from a custom integration", so a single loud line still
+    tells a household that has never run Frigate that something is broken. It isn't:
+    nobody told us Frigate exists, we probed the built-in add-on hostnames on spec,
+    and none answered. That is the expected outcome on most installs.
+
+    The probe still happens and is still recorded — at DEBUG, where troubleshooting
+    can find it and a dashboard cannot.
+    """
     frigate.get(f"{CANDIDATE}/api/version", exc=OSError("no route to host"))
 
     with caplog.at_level(logging.DEBUG, logger=frigate_proxy.__name__):
@@ -102,11 +113,45 @@ async def test_repeated_misses_warn_once_not_every_probe(hass, frigate, caplog):
 
     warned = [
         r.getMessage() for r in caplog.records
-        if r.levelno >= logging.WARNING and "not found at any candidate" in r.getMessage()
+        if r.levelno >= logging.WARNING
     ]
-    assert len(warned) == 1, (
-        "the 'Frigate not found' line must be loud ONCE and quiet after that; "
-        f"got {len(warned)} WARNING-level records across 3 probes"
+    assert warned == [], (
+        "no Frigate configured is not a fault and must never reach WARNING; got: "
+        f"{warned}"
+    )
+
+    # Positive control: the probe DID run and DID report itself, just quietly. Without
+    # this, a reader cannot tell a correctly-silent path from one that never executed.
+    debugged = [
+        r.getMessage() for r in caplog.records
+        if r.levelno == logging.DEBUG and "not found at any candidate" in r.getMessage()
+    ]
+    assert debugged, "the miss must still be recorded at DEBUG, or this proves nothing"
+
+
+async def test_a_configured_frigate_that_will_not_answer_still_warns(hass, frigate, caplog, monkeypatch):
+    """The fault case must stay loud — this is the half the quieting must not take with it.
+
+    If the official Frigate integration IS set up and its URL does not answer, the user
+    has Frigate and it is broken. Silence there would be the real regression, and it is
+    the one a change aimed at reducing noise is most likely to cause.
+    """
+    monkeypatch.setattr(
+        frigate_proxy, "_frigate_integration_urls",
+        lambda: ["http://configured-frigate:5000"],
+    )
+    frigate.get("http://configured-frigate:5000/api/version", exc=OSError("no route to host"))
+    frigate.get(f"{CANDIDATE}/api/version", exc=OSError("no route to host"))
+
+    with caplog.at_level(logging.DEBUG, logger=frigate_proxy.__name__):
+        assert await frigate_proxy._detect_frigate() is None
+
+    warned = [
+        r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+    ]
+    assert any("configured-frigate" in m for m in warned), (
+        "a configured Frigate that does not answer must warn AND name the URL; got: "
+        f"{warned}"
     )
 
 

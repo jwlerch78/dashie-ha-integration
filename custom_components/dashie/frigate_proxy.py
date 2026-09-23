@@ -92,8 +92,23 @@ async def _detect_frigate() -> str | None:
                 url, reason,
             )
 
-    # Loud once, quiet after — see _not_found_warned.
-    log = _LOGGER.debug if _not_found_warned else _LOGGER.warning
+    # 🔴 NOT FINDING FRIGATE IS ONLY A PROBLEM IF THE USER HAS FRIGATE.
+    #
+    # `entry_urls` is non-empty only when the official Frigate integration is set up. If it
+    # is empty, nobody has told us Frigate exists — we probed the built-in add-on hostnames
+    # on spec, none answered, and that is the correct and expected outcome on the large
+    # majority of installs. Logging it at WARNING made Home Assistant show a household that
+    # has never run Frigate a red "This error originated from a custom integration" panel
+    # for a non-event (chicknlil, dashie-ha-integration #3: "My dashboard has no Frigate,
+    # nor will it").
+    #
+    # So: absence is DEBUG. A configured Frigate that will not answer is the real fault, and
+    # it already warned per-URL above with the reason attached — which is the line worth
+    # reading, since it names what went wrong rather than just reporting a miss.
+    if entry_urls:
+        log = _LOGGER.debug if _not_found_warned else _LOGGER.warning
+    else:
+        log = _LOGGER.debug
     log("Frigate not found at any candidate URL: %s",
         [*entry_urls, *_FRIGATE_CANDIDATES])
     _not_found_warned = True
