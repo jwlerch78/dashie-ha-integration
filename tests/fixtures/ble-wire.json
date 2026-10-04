@@ -1,0 +1,22 @@
+{
+  "batch": {
+    "v": 1,
+    "enabled": true,
+    "screenOn": false,
+    "configHash": "",
+    "adverts": [
+      {"a": "49:24:03:27:01:C7", "r": -61, "n": "tps", "md": {"10241": "0a0b0c"}, "age": 250},
+      {"a": "AA:BB:CC:DD:EE:01", "r": -70, "u": ["0000fcd2-0000-1000-8000-00805f9b34fb"], "sd": {"0000fcd2-0000-1000-8000-00805f9b34fb": "4000"}, "tx": -4, "age": 0}
+    ]
+  },
+  "config": {
+    "v": 1,
+    "matchers": [
+      {"domain": "inkbird", "local_name": "tps"},
+      {"domain": "inkbird", "local_name": "Ink@IAM-T1*"},
+      {"domain": "bthome", "service_data_uuid": "0000fcd2-0000-1000-8000-00805f9b34fb"},
+      {"domain": "ibeacon", "manufacturer_id": 76, "manufacturer_data_start": [2, 21]}
+    ],
+    "addresses": ["49:24:03:27:01:C7"]
+  }
+}

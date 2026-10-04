@@ -128,3 +128,36 @@ async def test_handoff_only_to_tablets_that_support_it(hass: HomeAssistant, ha_b
 def test_webhook_hash_matches_the_tablet() -> None:
     # Same value HaBleApiHandler.webhookHash gives (sha256, first 16 hex): the hand-off loop stops on a match.
     assert webhook_hash("abc") == "ba7816bf8f01cfea"
+
+
+# --- Contract row 178: one fixture, byte-identical in the Android repo -------------------
+
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import pathlib  # noqa: E402
+
+from custom_components.dashie.ble_matchers import _MATCHER_KEYS, CONFIG_VERSION  # noqa: E402
+
+# Same constant as Android BleWireContractTest. Re-copy the file rather than "fixing" this.
+_FIXTURE_SHA256 = "d771133721cf93c922e74adcf4e53675f23cc9b1fbb85c50b3b929ac0709d381"
+
+
+def _fixture() -> dict:
+    raw = (pathlib.Path(__file__).parent / "fixtures" / "ble-wire.json").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == _FIXTURE_SHA256, "ble-wire.json differs from the Android copy"
+    return json.loads(raw)
+
+
+def test_fixture_batch_is_what_the_webhook_reads() -> None:
+    adverts = _fixture()["batch"]["adverts"]
+    parsed = [_parse_advert(a) for a in adverts]
+    assert all(p is not None for p in parsed)
+    assert parsed[0][2] == "tps" and parsed[0][5] == {10241: b"\x0a\x0b\x0c"}
+    assert parsed[1][4] == {"0000fcd2-0000-1000-8000-00805f9b34fb": b"\x40\x00"} and parsed[1][6] == -4
+
+
+def test_fixture_config_is_what_ble_matchers_sends() -> None:
+    config = _fixture()["config"]
+    assert config["v"] == CONFIG_VERSION
+    for matcher in config["matchers"]:
+        assert set(matcher) - {"domain"} <= set(_MATCHER_KEYS), matcher
