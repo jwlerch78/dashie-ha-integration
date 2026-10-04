@@ -104,26 +104,42 @@ async def test_webhook_without_bluetooth_does_not_break_setup(hass: HomeAssistan
 
 @pytest.mark.parametrize(
     ("ha_ble", "expect_handoff"),
-    [({"supported": True, "webhookHash": ""}, True), (None, False), ({"supported": False}, False)],
+    [
+        ({"supported": True, "webhookHash": ""}, True),
+        ("MATCH", False),  # the tablet already holds this webhook: the loop must stop
+        (None, False),
+        ({"supported": False}, False),
+    ],
 )
 async def test_handoff_only_to_tablets_that_support_it(hass: HomeAssistant, ha_ble, expect_handoff) -> None:
-    info = {"deviceID": DEVICE_ID, "deviceName": "Kitchen"}
-    if ha_ble is not None:
-        info["haBle"] = ha_ble
+    # Device info is fed through async_set_updated_data (what a successful poll does), NOT an HTTP mock:
+    # aioresponses cannot mock aiohttp 3.14 (HA 2026.9), which would make the negative cases pass vacuously.
     with patch(
         "custom_components.dashie.coordinator.DashieCoordinator.async_send",
         AsyncMock(return_value=type("R", (), {"ok": True})()),
     ) as send:
-        entry = await _setup_entry(hass, info)
+        entry = await _setup_entry(hass)
+        webhook_id = entry.data[CONF_BLE_WEBHOOK_ID]
+        info = {"deviceID": DEVICE_ID, "deviceName": "Kitchen"}
+        if ha_ble == "MATCH":
+            info["haBle"] = {"supported": True, "webhookHash": webhook_hash(webhook_id)}
+        elif ha_ble is not None:
+            info["haBle"] = ha_ble
         coordinator = hass.data[DOMAIN][entry.entry_id]
-        coordinator.async_update_listeners()
+        coordinator.async_set_updated_data(info)
         await hass.async_block_till_done()
-    calls = [c for c in send.call_args_list if c.args and c.args[0] == CMD_SET_WEBHOOK]
-    assert bool(calls) == expect_handoff
+        # Positive control for every case: the listener ran on this data (a supported, mismatched copy hands off).
+        probe = dict(info, haBle={"supported": True, "webhookHash": "0" * 16})
+        calls_before_probe = [c for c in send.call_args_list if c.args and c.args[0] == CMD_SET_WEBHOOK]
+        if not expect_handoff:
+            coordinator.async_set_updated_data(probe)
+            await hass.async_block_till_done()
+            probed = [c for c in send.call_args_list if c.args and c.args[0] == CMD_SET_WEBHOOK]
+            assert len(probed) == 1, "the listener never ran, so the negative result would be vacuous"
+    assert bool(calls_before_probe) == expect_handoff
     if expect_handoff:
-        assert calls[0].kwargs["webhookId"] == entry.data[CONF_BLE_WEBHOOK_ID]
-        assert calls[0].kwargs["path"] == f"/api/webhook/{entry.data[CONF_BLE_WEBHOOK_ID]}"
-
+        assert calls_before_probe[0].kwargs["webhookId"] == webhook_id
+        assert calls_before_probe[0].kwargs["path"] == f"/api/webhook/{webhook_id}"
 
 def test_webhook_hash_matches_the_tablet() -> None:
     # Same value HaBleApiHandler.webhookHash gives (sha256, first 16 hex): the hand-off loop stops on a match.
