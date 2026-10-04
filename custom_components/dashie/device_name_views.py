@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr
 
 from .const import DOMAIN
+from .registry_compat import all_devices
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class DashieDeviceNamesView(HomeAssistantView):
         device_registry = dr.async_get(hass)
 
         devices = []
-        for device in device_registry.devices.values():
+        for device in all_devices(device_registry):
             dashie_ids = [
                 id_tuple[1] for id_tuple in device.identifiers
                 if id_tuple[0] == DOMAIN

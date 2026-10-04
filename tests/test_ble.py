@@ -14,6 +14,7 @@ from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.dashie.registry_compat import all_devices
 from custom_components.dashie.ble_scanner import _parse_advert, scanner_source
 from custom_components.dashie.ble_webhook import CMD_SET_WEBHOOK, CONF_BLE_WEBHOOK_ID, webhook_hash
 
@@ -88,7 +89,7 @@ async def test_webhook_feeds_hass_bluetooth(hass: HomeAssistant, enable_bluetoot
     assert "config" in body and body["config"]["v"] == 1
     # HA's names for its devices, the user's rename winning; addresses upper-cased as the tablet sees them.
     # HA's own adapter (enable_bluetooth's hci0) is in the registry with a Bluetooth address and is left out.
-    assert any(kind == dr.CONNECTION_BLUETOOTH for d in devices.devices.values()
+    assert any(kind == dr.CONNECTION_BLUETOOTH for d in all_devices(devices)
                if d.config_entries & {e.entry_id for e in hass.config_entries.async_entries("bluetooth")}
                for kind, _ in d.connections)
     assert body["config"]["names"] == {INKBIRD: "IBS-TH2", UNHEARD: "Garage"}

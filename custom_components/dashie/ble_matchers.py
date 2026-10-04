@@ -24,6 +24,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.loader import async_get_bluetooth
 
+from .registry_compat import all_devices
+
 CONFIG_VERSION = 1
 
 # Matcher keys the tablet understands. Anything else HA adds later is dropped here
@@ -58,7 +60,7 @@ async def async_build_scan_config(hass: HomeAssistant) -> dict[str, Any]:
     # devices: not something the tablet hears for HA, nor worth one of its screen-off filters.
     adapters = {e.entry_id for e in hass.config_entries.async_entries("bluetooth")}
     names: dict[str, str] = {}
-    for device in dr.async_get(hass).devices.values():
+    for device in all_devices(dr.async_get(hass)):
         if device.config_entries & adapters:
             continue
         for kind, value in device.connections:
