@@ -1,7 +1,9 @@
 """SPIKE ONLY (Smart Home P9 connections, 10-04): a service that makes HA connect to a
 Bluetooth device and read one characteristic, the way an integration would.
 
-``dashie.ble_spike_read`` {address, characteristic} → {value_hex, value_text, source, ms}.
+``dashie.ble_spike_read`` {address, characteristic?} → {value_hex, value_text, source, ms}; with no
+characteristic it connects and returns the device's characteristics instead ({characteristics: [{uuid,
+properties}]}), so an unknown device (LightBlue's virtual one, a mug) can be explored first.
 It goes through HA's own Bluetooth stack (bleak_retry_connector.establish_connection), so
 HA picks the connection path itself; ``source`` says which receiver it chose. No HA
 integration of the user's is needed to test a connection through a tablet.
@@ -23,7 +25,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE = "ble_spike_read"
-SCHEMA = vol.Schema({vol.Required("address"): cv.string, vol.Required("characteristic"): cv.string})
+SCHEMA = vol.Schema({vol.Required("address"): cv.string, vol.Optional("characteristic"): cv.string})
 
 
 def async_setup_spike_service(hass: HomeAssistant) -> None:
@@ -43,6 +45,11 @@ def async_setup_spike_service(hass: HomeAssistant) -> None:
         started = time.monotonic()
         client = await establish_connection(BleakClient, device, address, max_attempts=1)
         try:
+            if "characteristic" not in call.data:
+                chars = [{"uuid": c.uuid, "properties": c.properties}
+                         for s in client.services for c in s.characteristics]
+                _LOGGER.info("SMARTHOME_BLE_SPIKE_LIST %s via %s: %d characteristics", address, source, len(chars))
+                return {"characteristics": chars, "source": source, "ms": int((time.monotonic() - started) * 1000)}
             value = await client.read_gatt_char(call.data["characteristic"])
         finally:
             await client.disconnect()

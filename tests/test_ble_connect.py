@@ -132,3 +132,38 @@ async def test_channel_needs_the_entrys_webhook_id(hass: HomeAssistant, enable_b
     ws = await http.ws_connect(f"/api/dashie/ble_channel/{entry.data[CONF_BLE_WEBHOOK_ID]}")
     assert not ws.closed
     await ws.close()
+
+
+async def test_ha_routes_a_connection_through_the_tablet(hass: HomeAssistant, enable_bluetooth, hass_client_no_auth) -> None:
+    """The spike service goes through HA's own stack: HA picks the tablet's connector itself, not the test."""
+    wire = _wire()
+    entry = await _setup_entry(hass)
+    webhook_id = entry.data[CONF_BLE_WEBHOOK_ID]
+    http = await hass_client_no_auth()
+    ws = await http.ws_connect(f"/api/dashie/ble_channel/{webhook_id}")
+    await ws.send_json(wire["hello"])
+    beacon = {"a": ADDR, "r": -45, "n": "LightBlue", "u": ["0000180f-0000-1000-8000-00805f9b34fb"], "age": 0}
+    await http.post(f"/api/webhook/{webhook_id}", json={"adverts": [beacon], "connect": True})
+    assert bluetooth.async_ble_device_from_address(hass, ADDR, connectable=True) is not None
+
+    call = hass.async_create_task(hass.services.async_call(
+        "dashie", "ble_spike_read", {"address": ADDR, "characteristic": BATTERY}, blocking=True, return_response=True))
+    await _answer(ws, "connect", wire["responses"]["connect"])
+    req = await _answer(ws, "read", wire["responses"]["read"])
+    assert req["h"] == 3
+    await _answer(ws, "disconnect", wire["responses"]["write"])
+    result = await call
+    assert result["value_hex"] == "5a" and result["source"] == scanner_source(DEVICE_ID)
+    await ws.close()
+
+
+async def test_spike_service_refuses_when_no_connectable_receiver_hears_it(hass: HomeAssistant, enable_bluetooth, hass_client_no_auth) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    entry = await _setup_entry(hass)
+    http = await hass_client_no_auth()
+    # Heard, but the tablet is listen-only: no connectable path.
+    await http.post(f"/api/webhook/{entry.data[CONF_BLE_WEBHOOK_ID]}", json={"adverts": [{"a": ADDR, "r": -45, "age": 0}]})
+    assert bluetooth.async_ble_device_from_address(hass, ADDR, connectable=False) is not None
+    with pytest.raises(HomeAssistantError, match="No connectable receiver"):
+        await hass.services.async_call("dashie", "ble_spike_read", {"address": ADDR}, blocking=True, return_response=True)

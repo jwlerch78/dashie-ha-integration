@@ -285,7 +285,7 @@ ble_spike_read:
         text:
     characteristic:
       name: Characteristic
-      description: UUID of the characteristic to read
-      required: true
+      description: UUID of the characteristic to read. Leave empty to list the device's characteristics.
+      required: false
       selector:
         text:
