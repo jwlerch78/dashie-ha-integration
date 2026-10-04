@@ -5,12 +5,13 @@ the entry's webhook comes out of HA's Bluetooth API with the tablet's scanner as
 source. Every absence asserted here is paired with the same lookup succeeding.
 """
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioresponses import aioresponses
 from homeassistant.components import bluetooth
 from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dashie.ble_scanner import _parse_advert, scanner_source
@@ -21,6 +22,7 @@ DEVICE_ID = "a83e167a70e648255f71a1744d25f740"
 IPV4 = "192.168.23.96"
 BASE = f"http://{IPV4}:2323"
 INKBIRD = "49:24:03:27:01:C7"
+UNHEARD = "A4:C1:38:00:00:01"
 ADVERT = {"a": INKBIRD, "r": -61, "n": "tps", "md": {"10241": "0a0b0c"}, "age": 250}
 
 
@@ -71,12 +73,35 @@ async def test_webhook_feeds_hass_bluetooth(hass: HomeAssistant, enable_bluetoot
     url = f"/api/webhook/{webhook_id}"
 
     assert bluetooth.async_last_service_info(hass, INKBIRD, connectable=False) is None
+    # Two of HA's Bluetooth devices: the tablet will hear one of them, nobody hears the other.
+    devices = dr.async_get(hass)
+    devices.async_get_or_create(config_entry_id=entry.entry_id, name="IBS-TH2",
+                                connections={(dr.CONNECTION_BLUETOOTH, INKBIRD.lower())})
+    renamed = devices.async_get_or_create(config_entry_id=entry.entry_id, name="Govee H5075",
+                                          connections={(dr.CONNECTION_BLUETOOTH, UNHEARD)})
+    devices.async_update_device(renamed.id, name_by_user="Garage")
 
     resp = await client.post(url, json={"v": 1, "enabled": True, "adverts": [ADVERT, {"bad": 1}]})
     assert resp.status == 200
     body = await resp.json()
     assert body["status"] == "ok" and body["accepted"] == 1
     assert "config" in body and body["config"]["v"] == 1
+    # HA's names for its devices, the user's rename winning; addresses upper-cased as the tablet sees them.
+    # HA's own adapter (enable_bluetooth's hci0) is in the registry with a Bluetooth address and is left out.
+    assert any(kind == dr.CONNECTION_BLUETOOTH for d in devices.devices.values()
+               if d.config_entries & {e.entry_id for e in hass.config_entries.async_entries("bluetooth")}
+               for kind, _ in d.connections)
+    assert body["config"]["names"] == {INKBIRD: "IBS-TH2", UNHEARD: "Garage"}
+    assert body["config"]["addresses"] == sorted([INKBIRD, UNHEARD])
+    # Heard through this tablet; the unheard device is absent, not "other".
+    assert body["heardVia"] == {INKBIRD: "this"}
+
+    # The same device, best heard by another receiver.
+    elsewhere = MagicMock(source="AA:BB:CC:DD:EE:FF")
+    with patch.object(bluetooth, "async_last_service_info",
+                      side_effect=lambda h, a, connectable: elsewhere if a == INKBIRD else None):
+        resp = await client.post(url, json={"adverts": [ADVERT], "configHash": body["configHash"]})
+    assert (await resp.json())["heardVia"] == {INKBIRD: "other"}
 
     info = bluetooth.async_last_service_info(hass, INKBIRD, connectable=False)
     assert info is not None
@@ -155,7 +180,7 @@ import pathlib  # noqa: E402
 from custom_components.dashie.ble_matchers import _MATCHER_KEYS, CONFIG_VERSION  # noqa: E402
 
 # Same constant as Android BleWireContractTest. Re-copy the file rather than "fixing" this.
-_FIXTURE_SHA256 = "d771133721cf93c922e74adcf4e53675f23cc9b1fbb85c50b3b929ac0709d381"
+_FIXTURE_SHA256 = "e487193551b3dc464549ebe7e28e10096c3ae241c864c9186c76cbfe4616aefb"
 
 
 def _fixture() -> dict:
@@ -177,3 +202,5 @@ def test_fixture_config_is_what_ble_matchers_sends() -> None:
     assert config["v"] == CONFIG_VERSION
     for matcher in config["matchers"]:
         assert set(matcher) - {"domain"} <= set(_MATCHER_KEYS), matcher
+    assert set(config["names"]) <= set(config["addresses"])
+    assert set(_fixture()["reply"]["heardVia"].values()) <= {"this", "other"}

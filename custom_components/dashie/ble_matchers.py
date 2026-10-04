@@ -10,6 +10,8 @@ list of filters, and this HA is the one that knows what it cares about:
   ``local_name`` cannot be one).
 * ``addresses`` — the Bluetooth address of every device HA already has in its device
   registry. An exact address is the one filter that always works, wildcard name or not.
+* ``names`` — HA's name for each of those addresses, so the tablet can say which of
+  HA's devices it is hearing in HA's words ("Pool thermometer"), not as addresses.
 
 The shape is a contract with the Android app (``BleLearnedFilters.kt``): bump
 ``CONFIG_VERSION`` when it changes.
@@ -52,12 +54,15 @@ async def async_build_scan_config(hass: HomeAssistant) -> dict[str, Any]:
         seen.add(key)
         matchers.append({"domain": matcher["domain"], **slim})
 
-    addresses = sorted(
-        {
-            value.upper()
-            for device in dr.async_get(hass).devices.values()
-            for kind, value in device.connections
-            if kind == dr.CONNECTION_BLUETOOTH
-        }
-    )
-    return {"v": CONFIG_VERSION, "matchers": matchers, "addresses": addresses}
+    # HA's own Bluetooth adapters are in the registry with a Bluetooth address too. They are receivers, not
+    # devices: not something the tablet hears for HA, nor worth one of its screen-off filters.
+    adapters = {e.entry_id for e in hass.config_entries.async_entries("bluetooth")}
+    names: dict[str, str] = {}
+    for device in dr.async_get(hass).devices.values():
+        if device.config_entries & adapters:
+            continue
+        for kind, value in device.connections:
+            if kind == dr.CONNECTION_BLUETOOTH:
+                names[value.upper()] = device.name_by_user or device.name or ""
+    # ``names`` was added without a version bump: an older app ignores keys it does not know.
+    return {"v": CONFIG_VERSION, "matchers": matchers, "addresses": sorted(names), "names": names}

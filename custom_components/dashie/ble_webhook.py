@@ -129,6 +129,7 @@ class DashieBle:
 
         reply: dict[str, Any] = {"status": "ok", "accepted": accepted}
         config, config_hash = await self._async_scan_config()
+        reply["heardVia"] = self._heard_via(config["addresses"])
         reply["configHash"] = config_hash
         if body.get("configHash") != config_hash:
             reply["config"] = config
@@ -142,6 +143,23 @@ class DashieBle:
             self._config_hash = hashlib.sha256(blob).hexdigest()[:16]
             self._config_at = now
         return self._config, self._config_hash
+
+    @callback
+    def _heard_via(self, addresses: list[str]) -> dict[str, str]:
+        """For each of HA's Bluetooth devices HA currently hears: is it through this tablet or another receiver?
+
+        HA keeps the best receiver per device, so "this" means the tablet is what HA is using for it. The tablet
+        shows it on its Bluetooth page; it cannot know about HA's other receivers on its own.
+        """
+        from homeassistant.components import bluetooth  # loaded: checked before the scanner started
+
+        source = self._scanner.source if self._scanner is not None else None
+        via: dict[str, str] = {}
+        for address in addresses:
+            info = bluetooth.async_last_service_info(self.hass, address, connectable=False)
+            if info is not None:
+                via[address] = "this" if info.source == source else "other"
+        return via
 
     # --- the scanner -----------------------------------------------------------------
 

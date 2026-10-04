@@ -17,6 +17,13 @@
       {"domain": "bthome", "service_data_uuid": "0000fcd2-0000-1000-8000-00805f9b34fb"},
       {"domain": "ibeacon", "manufacturer_id": 76, "manufacturer_data_start": [2, 21]}
     ],
-    "addresses": ["49:24:03:27:01:C7"]
+    "addresses": ["49:24:03:27:01:C7"],
+    "names": {"49:24:03:27:01:C7": "Pool thermometer"}
+  },
+  "reply": {
+    "status": "ok",
+    "accepted": 2,
+    "configHash": "0123456789abcdef",
+    "heardVia": {"49:24:03:27:01:C7": "this", "A4:C1:38:00:00:01": "other"}
   }
 }
