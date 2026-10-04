@@ -3,7 +3,9 @@
 One webhook per Dashie config entry, ``local_only``. The webhook id is the credential,
 so no HA token ever lives on the tablet. The tablet learns the id from a command this
 integration sends it (``setHaBleWebhook``), and only when the tablet's device info says
-it can use one (``haBle.supported``), so older apps never see an unknown command.
+it can use one (``haBle.supported``), so older apps never see an unknown command. The
+tablet reports only ``haBle.webhookHash`` (``webhook_hash``), never the id itself: its
+device info is readable by anyone who can reach port 2323.
 
 Request (tablet → HA), JSON::
 
@@ -43,6 +45,11 @@ _CONFIG_TTL = 60  # seconds a built scan config is reused
 _HANDOFF_RETRY = 300  # seconds between hand-off attempts to a tablet that has not taken it
 
 
+def webhook_hash(webhook_id: str) -> str:
+    """First 16 hex of sha256: what the tablet reports (HaBleApiHandler.webhookHash)."""
+    return hashlib.sha256(webhook_id.encode()).hexdigest()[:16]
+
+
 class DashieBle:
     """Bluetooth-for-HA state for one tablet (one config entry)."""
 
@@ -67,7 +74,7 @@ class DashieBle:
         info = (self.coordinator.data or {}).get("haBle")
         if not isinstance(info, dict) or not info.get("supported"):
             return
-        if info.get("webhookId") == self.webhook_id:
+        if info.get("webhookHash") == webhook_hash(self.webhook_id):
             return
         now = time.monotonic()
         if now - self._handoff_at < _HANDOFF_RETRY:

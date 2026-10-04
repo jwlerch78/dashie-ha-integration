@@ -14,7 +14,7 @@ from homeassistant.core import CoreState, HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dashie.ble_scanner import _parse_advert, scanner_source
-from custom_components.dashie.ble_webhook import CMD_SET_WEBHOOK, CONF_BLE_WEBHOOK_ID
+from custom_components.dashie.ble_webhook import CMD_SET_WEBHOOK, CONF_BLE_WEBHOOK_ID, webhook_hash
 
 DOMAIN = "dashie"
 DEVICE_ID = "a83e167a70e648255f71a1744d25f740"
@@ -104,7 +104,7 @@ async def test_webhook_without_bluetooth_does_not_break_setup(hass: HomeAssistan
 
 @pytest.mark.parametrize(
     ("ha_ble", "expect_handoff"),
-    [({"supported": True, "webhookId": ""}, True), (None, False), ({"supported": False}, False)],
+    [({"supported": True, "webhookHash": ""}, True), (None, False), ({"supported": False}, False)],
 )
 async def test_handoff_only_to_tablets_that_support_it(hass: HomeAssistant, ha_ble, expect_handoff) -> None:
     info = {"deviceID": DEVICE_ID, "deviceName": "Kitchen"}
@@ -123,3 +123,8 @@ async def test_handoff_only_to_tablets_that_support_it(hass: HomeAssistant, ha_b
     if expect_handoff:
         assert calls[0].kwargs["webhookId"] == entry.data[CONF_BLE_WEBHOOK_ID]
         assert calls[0].kwargs["path"] == f"/api/webhook/{entry.data[CONF_BLE_WEBHOOK_ID]}"
+
+
+def test_webhook_hash_matches_the_tablet() -> None:
+    # Same value HaBleApiHandler.webhookHash gives (sha256, first 16 hex): the hand-off loop stops on a match.
+    assert webhook_hash("abc") == "ba7816bf8f01cfea"
