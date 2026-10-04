@@ -39,6 +39,7 @@ from .voice_license_store import VoiceLicenseStore, register_voice_license_views
 from .music_relay import register_music_relay_views
 from .hidden_speakers_store import HiddenSpeakersStore, register_hidden_speakers_views
 from .sensor_push import register_sensor_push_views
+from .ble_webhook import async_setup_ble
 from .stream_multiplexer import StreamMultiplexer, register_stream_multiplexer_views
 from .device_name_views import register_device_name_views
 from .exposed_entities_view import register_exposed_entities_views
@@ -331,6 +332,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up centralized feed trigger subscriptions
     registry = hass.data[DOMAIN]["feed_registry"]
     coordinator.set_feed_registry(registry)
+
+    # Bluetooth for HA: the tablet's webhook, handed to tablets that can use it
+    async_setup_ble(hass, entry, coordinator)
 
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(_async_update_options))

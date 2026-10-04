@@ -1,9 +1,10 @@
 {
   "domain": "dashie",
   "name": "Dashie",
+  "after_dependencies": ["bluetooth"],
   "codeowners": ["@jwlerch78"],
   "config_flow": true,
-  "dependencies": ["http", "stream", "conversation"],
+  "dependencies": ["http", "stream", "conversation", "webhook"],
   "documentation": "https://github.com/jwlerch78/dashie-ha-integration",
   "integration_type": "device",
   "iot_class": "local_polling",
