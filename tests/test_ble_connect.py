@@ -25,7 +25,7 @@ from .test_ble import ADVERT, DEVICE_ID, _setup_entry
 
 pytestmark = pytest.mark.skipif(not CONNECT_SUPPORTED, reason="bleak < 1.0: connections not offered")
 
-_FIXTURE_SHA256 = "85ef9948ff4605473df9114ddd84b5c6b022ad900ada4f67c8356fd8342c1402"
+_FIXTURE_SHA256 = "ae6ac87b7a07d8169da26452b5fc9b0916b5c761e8c90e551454d0b6e45cea9a"
 ADDR = "AA:BB:CC:DD:EE:01"
 BATTERY = "00002a19-0000-1000-8000-00805f9b34fb"
 CUSTOM = "0000ffe1-0000-1000-8000-00805f9b34fb"
@@ -79,7 +79,7 @@ async def test_connect_read_notify_disconnect_through_the_tablet(hass: HomeAssis
     await task
     assert client.is_connected and client.mtu_size == 185
     assert client.services.get_characteristic(BATTERY).handle == 3
-    assert client.services.get_characteristic(CUSTOM).properties[1] == "write"
+    assert client.services.get_characteristic(CUSTOM).properties == ["read", "write-without-response", "write", "notify"]
 
     # read: by handle, value comes back as bytes.
     task = hass.async_create_task(client.read_gatt_char(client.services.get_characteristic(BATTERY)))

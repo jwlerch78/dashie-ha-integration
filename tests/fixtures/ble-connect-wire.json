@@ -15,7 +15,7 @@
         ]}
       ]},
       {"u": "0000ffe0-0000-1000-8000-00805f9b34fb", "h": 2, "c": [
-        {"u": "0000ffe1-0000-1000-8000-00805f9b34fb", "h": 5, "p": ["read", "write", "write-without-response", "notify"], "d": []}
+        {"u": "0000ffe1-0000-1000-8000-00805f9b34fb", "h": 5, "p": ["read", "write-without-response", "write", "notify"], "d": []}
       ]}
     ]},
     "read": {"t": "res", "id": 2, "ok": true, "d": "5a"},
