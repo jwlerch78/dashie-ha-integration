@@ -15,6 +15,10 @@ Request (tablet → HA), JSON::
 Response: ``{"status": "ok", "accepted": n, "configHash": "…"}``, plus ``"config"``
 (``ble_matchers``) whenever the tablet's ``configHash`` is stale.
 
+``"connect": true`` (the tablet has "Let Home Assistant connect" on and its channel is
+open, ``ble_channel.py``) registers the scanner as CONNECTABLE; the reply then says
+``"connectSupported"`` (false on an HA whose bleak is too old for ``ble_connect.py``).
+
 ``enabled: false`` unregisters the tablet's scanner. A tablet that never posts never
 gets a scanner, so HA's Bluetooth page lists only tablets that have the feature on.
 """
@@ -33,6 +37,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
+from .ble_channel import async_register_channel, async_unregister_channel
 from .ble_matchers import async_build_scan_config
 from .const import CONF_DEVICE_ID, DOMAIN
 from .coordinator import DashieCoordinator
@@ -65,6 +70,7 @@ class DashieBle:
         self._config_at = 0.0
         self._handoff_at = 0.0
         self._warned_no_bluetooth = False
+        self.channel = async_register_channel(hass, self.webhook_id, entry.title)
 
     # --- hand-off: tell the tablet where to post -------------------------------------
 
@@ -116,8 +122,14 @@ class DashieBle:
                 self._warned_no_bluetooth = True
             return web.json_response({"status": "no_bluetooth", "accepted": 0})
 
+        connect_ok = _connect_supported()
+        wants_connect = bool(body.get("connect")) and connect_ok
+        if self._scanner is not None and self._scanner.connectable != wants_connect:
+            _LOGGER.info("SMARTHOME_BLE_SCANNER %s connectable %s -> %s", self.entry.title,
+                         self._scanner.connectable, wants_connect)
+            self.async_stop_scanner()
         if self._scanner is None:
-            self._async_start_scanner()
+            self._async_start_scanner(wants_connect)
         adverts = body.get("adverts") or []
         if not isinstance(adverts, list):
             adverts = []
@@ -127,7 +139,7 @@ class DashieBle:
             self.entry.title, accepted, dropped, body.get("screenOn"),
         )
 
-        reply: dict[str, Any] = {"status": "ok", "accepted": accepted}
+        reply: dict[str, Any] = {"status": "ok", "accepted": accepted, "connectSupported": connect_ok}
         config, config_hash = await self._async_scan_config()
         reply["heardVia"] = self._heard_via(config["addresses"])
         reply["configHash"] = config_hash
@@ -164,13 +176,14 @@ class DashieBle:
     # --- the scanner -----------------------------------------------------------------
 
     @callback
-    def _async_start_scanner(self) -> None:
+    def _async_start_scanner(self, connectable: bool = False) -> None:
         from .ble_scanner import async_start_scanner  # needs the bluetooth integration
 
         device_id = self.entry.data[CONF_DEVICE_ID]
         ha_device = dr.async_get(self.hass).async_get_device(identifiers={(DOMAIN, device_id)})
         self._scanner, self._unload_scanner = async_start_scanner(
-            self.hass, self.entry, device_id, ha_device.id if ha_device else None
+            self.hass, self.entry, device_id, ha_device.id if ha_device else None,
+            channel=self.channel if connectable else None,
         )
 
     @callback
@@ -183,7 +196,15 @@ class DashieBle:
     @callback
     def async_unload(self) -> None:
         webhook.async_unregister(self.hass, self.webhook_id)
+        async_unregister_channel(self.hass, self.webhook_id)
         self.async_stop_scanner()
+
+
+def _connect_supported() -> bool:
+    """Can this HA route connections through a tablet? (bleak 1.0+, ble_connect.py)"""
+    from .ble_connect import CONNECT_SUPPORTED  # bleak ships with the bluetooth integration
+
+    return CONNECT_SUPPORTED
 
 
 @callback
@@ -194,6 +215,9 @@ def async_setup_ble(hass: HomeAssistant, entry: ConfigEntry, coordinator: Dashie
             entry, data={**entry.data, CONF_BLE_WEBHOOK_ID: webhook.async_generate_id()}
         )
     ble = DashieBle(hass, entry, coordinator)
+    from .ble_spike import async_setup_spike_service  # SPIKE ONLY: remove with ble_spike.py
+
+    async_setup_spike_service(hass)
     webhook.async_register(
         hass, DOMAIN, f"Dashie Bluetooth ({entry.title})", ble.webhook_id, ble.async_handle,
         local_only=True, allowed_methods=["POST"],

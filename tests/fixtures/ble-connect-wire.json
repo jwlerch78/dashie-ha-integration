@@ -1,0 +1,30 @@
+{
+  "hello": {"t": "hello", "v": 1, "slots": 3, "free": 3},
+  "requests": {
+    "connect": {"t": "req", "id": 1, "op": "connect", "a": "AA:BB:CC:DD:EE:01", "timeout": 20000},
+    "read": {"t": "req", "id": 2, "op": "read", "a": "AA:BB:CC:DD:EE:01", "h": 3},
+    "write": {"t": "req", "id": 3, "op": "write", "a": "AA:BB:CC:DD:EE:01", "h": 5, "d": "0102", "rsp": true},
+    "notify": {"t": "req", "id": 4, "op": "notify", "a": "AA:BB:CC:DD:EE:01", "h": 5, "on": true},
+    "disconnect": {"t": "req", "id": 5, "op": "disconnect", "a": "AA:BB:CC:DD:EE:01"}
+  },
+  "responses": {
+    "connect": {"t": "res", "id": 1, "ok": true, "mtu": 185, "services": [
+      {"u": "0000180f-0000-1000-8000-00805f9b34fb", "h": 1, "c": [
+        {"u": "00002a19-0000-1000-8000-00805f9b34fb", "h": 3, "p": ["read", "notify"], "d": [
+          {"u": "00002902-0000-1000-8000-00805f9b34fb", "h": 4}
+        ]}
+      ]},
+      {"u": "0000ffe0-0000-1000-8000-00805f9b34fb", "h": 2, "c": [
+        {"u": "0000ffe1-0000-1000-8000-00805f9b34fb", "h": 5, "p": ["read", "write", "write-without-response", "notify"], "d": []}
+      ]}
+    ]},
+    "read": {"t": "res", "id": 2, "ok": true, "d": "5a"},
+    "write": {"t": "res", "id": 3, "ok": true},
+    "failed": {"t": "res", "id": 1, "ok": false, "err": "GATT status 133"}
+  },
+  "events": {
+    "notify": {"t": "ev", "ev": "notify", "a": "AA:BB:CC:DD:EE:01", "h": 5, "d": "0a0b"},
+    "disconnected": {"t": "ev", "ev": "disconnected", "a": "AA:BB:CC:DD:EE:01", "reason": "peer"},
+    "slots": {"t": "ev", "ev": "slots", "free": 2}
+  }
+}

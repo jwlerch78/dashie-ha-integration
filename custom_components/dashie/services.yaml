@@ -267,3 +267,25 @@ send_command:
             - unlockKiosk
             - clearCache
             - clearWebstorage
+
+
+# =============================================================================
+# BLUETOOTH CONNECTIONS SPIKE (temporary; removed with ble_spike.py)
+# =============================================================================
+
+ble_spike_read:
+  name: Bluetooth spike read
+  description: Test only. Connect to a Bluetooth device through Home Assistant's best receiver and read one characteristic.
+  fields:
+    address:
+      name: Address
+      description: Bluetooth address of the device
+      required: true
+      selector:
+        text:
+    characteristic:
+      name: Characteristic
+      description: UUID of the characteristic to read
+      required: true
+      selector:
+        text:

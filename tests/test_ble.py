@@ -205,3 +205,15 @@ def test_fixture_config_is_what_ble_matchers_sends() -> None:
         assert set(matcher) - {"domain"} <= set(_MATCHER_KEYS), matcher
     assert set(config["names"]) <= set(config["addresses"])
     assert set(_fixture()["reply"]["heardVia"].values()) <= {"this", "other"}
+
+
+async def test_connect_request_is_honoured_only_where_ha_supports_it(hass: HomeAssistant, enable_bluetooth, hass_client_no_auth) -> None:
+    """A tablet asking to be connectable gets it on HA with bleak 1.0+, and stays listen-only on older HA."""
+    from custom_components.dashie.ble_connect import CONNECT_SUPPORTED
+
+    entry = await _setup_entry(hass)
+    client = await hass_client_no_auth()
+    url = f"/api/webhook/{entry.data[CONF_BLE_WEBHOOK_ID]}"
+    body = await (await client.post(url, json={"adverts": [ADVERT], "connect": True})).json()
+    assert body["connectSupported"] is CONNECT_SUPPORTED
+    assert bluetooth.async_scanner_by_source(hass, scanner_source(DEVICE_ID)).connectable is CONNECT_SUPPORTED
