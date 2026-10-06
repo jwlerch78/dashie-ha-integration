@@ -29,6 +29,11 @@ ALLOWED_OPEN = {
         "break every motion push in the field. The device already holds an HA OAuth token "
         "at CoreComponentInit.kt:349-358. Closes when an APK that sends it is in the field "
         "— client first, then this flag, never the reverse.",
+    ("ble_channel.py", "BleChannelView"):
+        "Connections spike: the tablet's WebSocket for HA-initiated Bluetooth connections. Like HA's own "
+        "webhooks, the path's webhook id IS the credential (unknown id -> 404, tested), and the view "
+        "refuses any peer that is not on the local network (is_local). Closes if the spike ships: "
+        "decide then between keeping webhook semantics or carrying the tablet's HA token.",
 }
 
 
