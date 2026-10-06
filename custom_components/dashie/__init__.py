@@ -30,6 +30,7 @@ from .const import (
 from .const import CONF_DEVICE_ID
 from . import addon_bridge
 from .coordinator import DashieCoordinator
+from .registry_compat import device_by_identifier
 from .feed_registry import FeedRegistry, register_feed_registry_views
 from .feed_discovery import register_feed_discovery_views
 from .media_api import register_media_api_views
@@ -397,7 +398,7 @@ async def _async_migrate_device_id_if_needed(
 
     # 2. Update device registry identifier so DeviceInfo continues to match.
     device_registry = dr.async_get(hass)
-    device = device_registry.async_get_device(identifiers={(DOMAIN, current_id)})
+    device = device_by_identifier(device_registry, (DOMAIN, current_id), entry.entry_id)
     if device:
         device_registry.async_update_device(
             device.id,

@@ -35,6 +35,7 @@ from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .ble_matchers import async_build_scan_config
 from .const import CONF_DEVICE_ID, DOMAIN
+from .registry_compat import device_by_identifier
 from .coordinator import DashieCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -168,7 +169,7 @@ class DashieBle:
         from .ble_scanner import async_start_scanner  # needs the bluetooth integration
 
         device_id = self.entry.data[CONF_DEVICE_ID]
-        ha_device = dr.async_get(self.hass).async_get_device(identifiers={(DOMAIN, device_id)})
+        ha_device = device_by_identifier(dr.async_get(self.hass), (DOMAIN, device_id), self.entry.entry_id)
         self._scanner, self._unload_scanner = async_start_scanner(
             self.hass, self.entry, device_id, ha_device.id if ha_device else None
         )
