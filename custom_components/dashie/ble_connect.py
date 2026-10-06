@@ -12,11 +12,11 @@ Requires bleak 1.0+ (HA 2025.8+); older HA never marks the tablet connectable
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from functools import partial
 from typing import Any
 
-import bleak
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.client import BaseBleakClient, NotifyCallback
 from bleak.backends.descriptor import BleakGATTDescriptor
@@ -29,12 +29,9 @@ from .ble_channel import BleChannel, ChannelError
 
 _LOGGER = logging.getLogger(__name__)
 
-try:
-    CONNECT_SUPPORTED = int(bleak.__version__.split(".")[0]) >= 1  # type: ignore[attr-defined]
-except (AttributeError, ValueError):
-    from importlib.metadata import version as _version
-
-    CONNECT_SUPPORTED = int(_version("bleak").split(".")[0]) >= 1
+# bleak 1.0 gave BaseBleakClient.connect its `pair` argument; reading the signature avoids package metadata, which is
+# file I/O and was flagged as a blocking call when this module was first imported inside HA's event loop (10-06).
+CONNECT_SUPPORTED = "pair" in inspect.signature(BaseBleakClient.connect).parameters
 
 DEFAULT_TIMEOUT = 20.0
 OP_TIMEOUT = 15.0

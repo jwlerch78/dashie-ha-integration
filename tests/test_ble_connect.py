@@ -153,7 +153,7 @@ async def test_ha_routes_a_connection_through_the_tablet(hass: HomeAssistant, en
     assert req["h"] == 3
     await _answer(ws, "disconnect", wire["responses"]["write"])
     result = await call
-    assert result["value_hex"] == "5a" and result["source"] == scanner_source(DEVICE_ID)
+    assert result["value_hex"] == "5a" and result["source"].startswith("tablet:")
     await ws.close()
 
 

@@ -41,9 +41,11 @@ def async_setup_spike_service(hass: HomeAssistant) -> None:
         device = bluetooth.async_ble_device_from_address(hass, address, connectable=True)
         if device is None:
             raise HomeAssistantError(f"No connectable receiver hears {address}")
-        source = (device.details or {}).get("source")
         started = time.monotonic()
         client = await establish_connection(BleakClient, device, address, max_attempts=1)
+        # The receiver HA actually connected through. device.details["source"] is only the one that last HEARD the
+        # device, and read as the HA box while the tablet made every connection (10-06 Fire run).
+        source = _connected_via(client)
         try:
             if "characteristic" not in call.data:
                 chars = [{"uuid": c.uuid, "properties": c.properties}
@@ -59,3 +61,13 @@ def async_setup_spike_service(hass: HomeAssistant) -> None:
         return {"value_hex": bytes(value).hex(), "value_text": text, "source": source, "ms": ms}
 
     hass.services.async_register(DOMAIN, SERVICE, _read, schema=SCHEMA, supports_response=SupportsResponse.ONLY)
+
+
+def _connected_via(client) -> str:
+    """'tablet:<name>' when the connection went through a Dashie tablet, else the backend HA chose."""
+    from .ble_connect import DashieBleClient
+
+    backend = getattr(client, "_backend", None)
+    if isinstance(backend, DashieBleClient):
+        return f"tablet:{backend._channel.name}"
+    return getattr(backend, "_source", None) or type(backend).__name__
