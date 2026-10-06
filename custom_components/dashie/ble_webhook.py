@@ -31,6 +31,7 @@ from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .ble_matchers import async_build_scan_config
@@ -51,6 +52,11 @@ def webhook_hash(webhook_id: str) -> str:
     return hashlib.sha256(webhook_id.encode()).hexdigest()[:16]
 
 
+def ble_devices_signal(entry_id: str) -> str:
+    """Dispatcher signal: this entry's Bluetooth-devices view changed."""
+    return f"{DOMAIN}_ble_devices_{entry_id}"
+
+
 class DashieBle:
     """Bluetooth-for-HA state for one tablet (one config entry)."""
 
@@ -66,6 +72,10 @@ class DashieBle:
         self._config_at = 0.0
         self._handoff_at = 0.0
         self._warned_no_bluetooth = False
+        # What `_heard_via` saw on the last batch, as the sensor exposes it. Built there
+        # and only there: one lookup per address, two consumers (the tablet's reply and
+        # `ble_entities`). Empty while no scanner is running.
+        self._ble_devices: list[dict[str, Any]] = []
 
     # --- hand-off: tell the tablet where to post -------------------------------------
 
@@ -155,12 +165,33 @@ class DashieBle:
         from homeassistant.components import bluetooth  # loaded: checked before the scanner started
 
         source = self._scanner.source if self._scanner is not None else None
+        names = (self._config or {}).get("names") or {}
         via: dict[str, str] = {}
+        devices: list[dict[str, Any]] = []
         for address in addresses:
             info = bluetooth.async_last_service_info(self.hass, address, connectable=False)
-            if info is not None:
-                via[address] = "this" if info.source == source else "other"
+            if info is None:
+                continue
+            heard = "this" if info.source == source else "other"
+            via[address] = heard
+            # The same lookup already in hand also carries the rssi, so the sensor's view
+            # costs no second pass and cannot disagree with what the tablet was told.
+            devices.append(
+                {"name": names.get(address, ""), "address": address, "via": heard, "rssi": info.rssi}
+            )
+        self._ble_devices = devices
+        async_dispatcher_send(self.hass, ble_devices_signal(self.entry.entry_id))
         return via
+
+    @property
+    def ble_devices(self) -> list[dict[str, Any]]:
+        """HA's Bluetooth devices this tablet hears, as of its last batch."""
+        return self._ble_devices
+
+    @property
+    def is_scanning(self) -> bool:
+        """Whether this tablet is currently a Bluetooth receiver for HA."""
+        return self._scanner is not None
 
     # --- the scanner -----------------------------------------------------------------
 
@@ -180,11 +211,18 @@ class DashieBle:
             self._unload_scanner()
         self._scanner = None
         self._unload_scanner = None
+        # The tablet has turned Bluetooth for HA off: drop the stale view and let the
+        # sensor go unavailable now rather than at whatever would have been the next batch.
+        self._ble_devices = []
+        async_dispatcher_send(self.hass, ble_devices_signal(self.entry.entry_id))
 
     @callback
     def async_unload(self) -> None:
         webhook.async_unregister(self.hass, self.webhook_id)
         self.async_stop_scanner()
+        # Published for the sensor platform in `async_setup_ble`; drop it with the entry so
+        # an unloaded entry does not leave a live object behind in hass.data.
+        self.hass.data.get(DOMAIN, {}).pop(f"{self.entry.entry_id}_ble", None)
 
 
 @callback
@@ -195,6 +233,9 @@ def async_setup_ble(hass: HomeAssistant, entry: ConfigEntry, coordinator: Dashie
             entry, data={**entry.data, CONF_BLE_WEBHOOK_ID: webhook.async_generate_id()}
         )
     ble = DashieBle(hass, entry, coordinator)
+    # The sensor platform is forwarded before this runs, so `ble_entities` looks this
+    # up lazily rather than being handed a reference that would still be None.
+    hass.data[DOMAIN][f"{entry.entry_id}_ble"] = ble
     webhook.async_register(
         hass, DOMAIN, f"Dashie Bluetooth ({entry.title})", ble.webhook_id, ble.async_handle,
         local_only=True, allowed_methods=["POST"],

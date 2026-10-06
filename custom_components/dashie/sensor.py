@@ -19,6 +19,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, CONF_DEVICE_ID
 from .coordinator import DashieCoordinator
+from .ble_entities import DashieBluetoothDevicesSensor
 from .entity import DashieEntity
 
 
@@ -56,6 +57,11 @@ async def async_setup_entry(
         DashieStorageSensor(coordinator, device_id),
         DashieWifiSignalSensor(coordinator, device_id),
         DashieWifiRssiSensor(coordinator, device_id),
+
+        # =================================================================
+        # BLUETOOTH FOR HA — exposes what ble_webhook already derived
+        # =================================================================
+        DashieBluetoothDevicesSensor(coordinator, device_id, entry),
     ]
 
     async_add_entities(entities)

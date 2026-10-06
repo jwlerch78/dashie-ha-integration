@@ -205,3 +205,71 @@ def test_fixture_config_is_what_ble_matchers_sends() -> None:
         assert set(matcher) - {"domain"} <= set(_MATCHER_KEYS), matcher
     assert set(config["names"]) <= set(config["addresses"])
     assert set(_fixture()["reply"]["heardVia"].values()) <= {"this", "other"}
+
+
+async def test_bluetooth_devices_sensor_counts_only_what_this_tablet_is_best_for(
+    hass: HomeAssistant, enable_bluetooth, hass_client_no_auth
+) -> None:
+    """The sensor's state is how many devices HA uses THIS tablet for, not how many it hears.
+
+    The fixture is built so the two are different numbers: the tablet hears both devices,
+    and HA prefers another receiver for one of them. A sensor that reported everything it
+    heard — or marked every device "this" — reads 2 here and fails.
+
+    `via` is the field with something to get wrong, so it is asserted per address rather
+    than only through the count.
+    """
+    from custom_components.dashie.ble_entities import DashieBluetoothDevicesSensor
+
+    entry = await _setup_entry(hass)
+    webhook_id = entry.data[CONF_BLE_WEBHOOK_ID]
+    client = await hass_client_no_auth()
+    url = f"/api/webhook/{webhook_id}"
+
+    devices = dr.async_get(hass)
+    devices.async_get_or_create(config_entry_id=entry.entry_id, name="IBS-TH2",
+                                connections={(dr.CONNECTION_BLUETOOTH, INKBIRD.lower())})
+    renamed = devices.async_get_or_create(config_entry_id=entry.entry_id, name="Govee H5075",
+                                          connections={(dr.CONNECTION_BLUETOOTH, UNHEARD)})
+    devices.async_update_device(renamed.id, name_by_user="Garage")
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    sensor = DashieBluetoothDevicesSensor(coordinator, DEVICE_ID, entry)
+    sensor.hass = hass
+
+    # Both devices are heard; HA's best receiver for UNHEARD is a different one.
+    ours = MagicMock(source=scanner_source(DEVICE_ID), rssi=-61)
+    theirs = MagicMock(source="AA:BB:CC:DD:EE:FF", rssi=-88)
+    with patch.object(bluetooth, "async_last_service_info",
+                      side_effect=lambda h, a, connectable: ours if a == INKBIRD else theirs):
+        resp = await client.post(url, json={"v": 1, "enabled": True, "adverts": [ADVERT]})
+    assert resp.status == 200
+
+    # The count is the state, and it counts "this" only.
+    assert sensor.native_value == 1
+
+    # Availability rides the coordinator as well as the scanner, and that is deliberate:
+    # the BLE view only moves when a batch arrives, so a tablet HA can no longer reach
+    # would otherwise keep presenting its last count as current. Driven explicitly here
+    # rather than inherited from fixture timing, so the property is tested and not assumed.
+    coordinator.last_update_success = True
+    assert sensor.available is True
+    coordinator.last_update_success = False
+    assert sensor.available is False, "a tablet HA cannot reach must not show a frozen count as current"
+    coordinator.last_update_success = True
+
+    # The attribute carries every device the tablet hears, including the one HA prefers elsewhere.
+    reported = sensor.extra_state_attributes["devices"]
+    assert {d["address"]: d["via"] for d in reported} == {INKBIRD: "this", UNHEARD: "other"}
+    assert {d["address"]: d["name"] for d in reported} == {INKBIRD: "IBS-TH2", UNHEARD: "Garage"}
+    assert {d["address"]: d["rssi"] for d in reported} == {INKBIRD: -61, UNHEARD: -88}
+
+    # The sensor and the tablet are told the same thing, because one pass produced both.
+    assert (await resp.json())["heardVia"] == {INKBIRD: "this", UNHEARD: "other"}
+
+    # Bluetooth for HA turned off is unavailable — distinct from scanning and hearing nothing.
+    resp = await client.post(url, json={"enabled": False})
+    assert resp.status == 200
+    assert sensor.available is False
+    assert sensor.native_value == 0
+    assert sensor.extra_state_attributes["devices"] == []
