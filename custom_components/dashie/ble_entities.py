@@ -38,6 +38,17 @@ class DashieBluetoothDevicesSensor(DashieEntity, SensorEntity):
     """How many of HA's Bluetooth devices this tablet is HA's best receiver for."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
+    # DIAGNOSTIC is deliberate, and it is a TRADE rather than a default (B's call, 2026-10-06).
+    # For: this is telemetry about whether the BLE bridge is working — a count of what the
+    # scanner can see, with `devices`/`via` — not a primary home entity, and it sits with the
+    # other status sensors on the device page. Nothing downstream loses anything: diagnostic
+    # entities still render and still work in templates, automations and the websocket API,
+    # so the console badge reads it exactly the same.
+    # 🔴 AGAINST, recorded so it is known rather than discovered: diagnostic entities are NOT
+    # exposed to Assist by default, so "how many bluetooth devices do you see" will not work
+    # without exposing this entity by hand. That is the intended trade in a voice product — a
+    # per-device count is exactly what you do not want auto-published into a voice catalogue.
+    # ⇒ If it should ever be voice-reachable, the fix is MANUAL EXPOSURE, not a category change.
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_translation_key = "bluetooth_devices"
     _attr_icon = "mdi:bluetooth-audio"
