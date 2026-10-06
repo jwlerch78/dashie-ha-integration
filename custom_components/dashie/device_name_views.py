@@ -19,7 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr
 
 from .const import DOMAIN
-from .registry_compat import all_devices
+from .registry_compat import all_devices, device_by_identifier
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class DashieDeviceAreaView(HomeAssistantView):
             return web.json_response({"error": "device_id required"}, status=400)
 
         device_registry = dr.async_get(hass)
-        device = device_registry.async_get_device(identifiers={(DOMAIN, device_id)})
+        device = device_by_identifier(device_registry, (DOMAIN, device_id))
         if device is None:
             # Unknown device (not yet registered) → no area. Not an error; the brain falls back to
             # "ask which room" when device_area is absent.
