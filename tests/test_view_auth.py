@@ -32,8 +32,8 @@ ALLOWED_OPEN = {
     ("ble_channel.py", "BleChannelView"):
         "Bluetooth connections: the tablet's WebSocket for HA-initiated Bluetooth connections. Like HA's own "
         "webhooks, the path's webhook id IS the credential (unknown id -> 404, tested), and the view "
-        "refuses any peer that is not on the local network (is_local). OPEN QUESTION before release: "
-        "keep webhook semantics, or carry the tablet's HA token (security pass, John 10-07 step 3).",
+        "refuses any peer that is not on the local network (is_local). Kept for 1.6.0 (John 10-07: fine "
+        "for an initial release). Known gap: no is_cloud_connection check as HA's local_only webhooks have.",
 }
 
 
