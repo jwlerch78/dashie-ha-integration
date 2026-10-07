@@ -100,11 +100,25 @@ def _parse_advert(item: Any):
 
 @callback
 def async_start_scanner(
-    hass: HomeAssistant, entry: ConfigEntry, device_id: str, ha_device_id: str | None
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    device_id: str,
+    ha_device_id: str | None,
+    channel: Any = None,
 ) -> tuple[DashieRemoteScanner, CALLBACK_TYPE]:
-    """Register the tablet's scanner with HA. Returns it and its unregister callback."""
+    """Register the tablet's scanner with HA. Returns it and its unregister callback.
+
+    With a ``channel`` (the tablet has "Let Home Assistant connect" on), the scanner is
+    CONNECTABLE: HA may route a connection through the tablet (``ble_connect.py``).
+    Without one it only listens, so HA never tries to connect through a tablet that can't.
+    """
     source = scanner_source(device_id)
-    scanner = DashieRemoteScanner(source, entry.title, None, False)
+    if channel is not None:
+        from .ble_connect import connector  # needs bleak 1.0+; callers check CONNECT_SUPPORTED
+
+        scanner = DashieRemoteScanner(source, entry.title, connector(source, channel), True)
+    else:
+        scanner = DashieRemoteScanner(source, entry.title, None, False)
     kwargs: dict[str, Any] = {}
     if _REGISTER_TAKES_SOURCE:
         kwargs = {
@@ -114,7 +128,9 @@ def async_start_scanner(
             "source_device_id": ha_device_id,
         }
     unloads = [async_register_scanner(hass, scanner, **kwargs), scanner.async_setup()]
-    _LOGGER.info("SMARTHOME_BLE_SCANNER registered %s as %s", entry.title, source)
+    _LOGGER.info(
+        "SMARTHOME_BLE_SCANNER registered %s as %s connectable=%s", entry.title, source, scanner.connectable
+    )
 
     @callback
     def _unload() -> None:
