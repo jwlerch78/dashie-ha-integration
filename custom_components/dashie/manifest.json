@@ -10,7 +10,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/jwlerch78/dashie-ha-integration/issues",
   "requirements": [],
-  "version": "1.5.3",
+  "version": "1.6.0",
   "zeroconf": [
     "_dashie-kiosk._tcp.local."
   ]
