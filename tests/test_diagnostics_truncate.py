@@ -3,6 +3,7 @@
 The full id addresses the tablet's remote-command channel, and these dumps get attached to public
 GitHub issues. Support still matches a dump to a device by the 6-character prefix.
 """
+import pathlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +17,14 @@ LOG = [
     f"15:28:07.609 [INFO] WakeProbe: WAKEPROBE v1 ts=1 dev={FULL} engine=dual trig=1",
     "15:28:45.878 [INFO] MEMORY: WakeWord: engine=dual",
 ]
+
+
+def test_control_the_module_under_test_is_THIS_tree():
+    # Positive control (O, 2026-10-09): conftest's shared-venv symlink once made this suite exercise another
+    # branch's code with every leg green. Prove the diagnostics module came from the checkout running the tests.
+    here = pathlib.Path(__file__).resolve().parent.parent
+    assert pathlib.Path(diag.__file__).resolve().is_relative_to(here), f"{diag.__file__} is not under {here}"
+    assert hasattr(diag, "_truncate_ids"), "the branch under test lacks the truncation"
 
 
 def _assert_no_full_id(obj, full):
