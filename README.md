@@ -14,7 +14,6 @@ A Home Assistant integration for [Dashie](https://dashieapp.com/guides/dashie-ki
 - **Screensaver**: Show photos from your HA media folder, a URL, or a dedicated screensaver app
 - **Voice & Timers**: Text-to-speech and up to 3 concurrent on-screen timers, controllable from HA automations
 - **Media Player**: Control music playback via Music Assistant
-- **Update Entity**: Surfaces new integration releases from GitHub
 
 ## Installation
 
@@ -42,6 +41,15 @@ Dashie is in the default HACS store — no custom repository needed.
 1. Download the `custom_components/dashie` folder from this repository
 2. Copy it to your Home Assistant's `custom_components` directory
 3. Restart Home Assistant
+
+### Updating
+
+**Updates come through HACS.** HACS notifies you when a new release is available and
+installs it for you — Settings → System → Updates, or the HACS panel.
+
+If you installed manually, HACS isn't tracking the integration, so it won't notify you:
+watch [Releases](https://github.com/jwlerch78/dashie-ha-integration/releases) and repeat
+the manual steps above. Installing through HACS instead is the easier path.
 
 ## Setup
 
@@ -116,11 +124,6 @@ Each Dashie device creates the following entities:
 | Entity | Description |
 |--------|-------------|
 | `image.{device}_screenshot` | Current screenshot of the tablet display |
-
-### Update
-| Entity | Description |
-|--------|-------------|
-| `update.dashie_integration_update` | Notifies when a new integration release is available on GitHub |
 
 ### Camera (if RTSP enabled)
 | Entity | Description |

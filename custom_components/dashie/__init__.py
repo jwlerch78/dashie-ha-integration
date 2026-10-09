@@ -67,8 +67,14 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.SWITCH,
     Platform.TEXT,
-    Platform.UPDATE,
 ]
+
+# Retired 2026-10-09. The integration shipped its own update entity that declared
+# RELEASE_NOTES but never async_install, so it announced a version it could not install,
+# while `jwlerch78/dashie-ha-integration` is in the HACS default store and HACS ships a
+# real update entity that can. Held as a constant because the cleanup below has to match
+# the id the DELETED platform used to register (update.py:147, f"{DOMAIN}_integration_update").
+RETIRED_UPDATE_UNIQUE_ID = f"{DOMAIN}_integration_update"
 
 # Service schemas
 SERVICE_SEND_COMMAND = "send_command"
@@ -110,6 +116,46 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Dashie integration."""
     hass.data.setdefault(DOMAIN, {})
     return True
+
+
+@callback
+def _async_remove_retired_update_entity(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the integration's own update entity, retired in favour of HACS's own.
+
+    Home Assistant KEEPS the registry row for an entity whose platform has stopped
+    providing it and renders it `unavailable` rather than deleting it. So dropping
+    Platform.UPDATE on its own would leave every existing household a dead
+    "Dashie Integration Update - unavailable" row, which is the same class of confusing
+    report this retirement exists to end. This removes the row instead.
+
+    Runs on EVERY config entry, deliberately UNGUARDED:
+
+    * The row belongs to whichever entry happened to create it. The deleted platform
+      created it once behind a `hass.data` flag that clears on restart, so ownership
+      migrated between tablets across reboots - that nondeterminism is the defect being
+      retired, and a guard flag here would reintroduce its exact shape while buying
+      nothing for the same reason.
+    * `er.async_entries_for_config_entry` is entry-scoped, so a "do it once on the first
+      entry" optimisation would miss the row in precisely the multi-tablet households
+      where the ownership migration bites.
+    * It is naturally idempotent: the second pass finds nothing. Note it removes only
+      what THIS pass found in the registry and never a remembered entity_id - on the
+      declared floor (2025.1) `async_remove` does `self.entities.pop(entity_id)` and
+      raises KeyError for an absent entity, where 2026.5+ guards and tolerates it.
+
+    One ENTITY only, never a device and never a config entry: removing a config entry
+    with no registered entities caused an add -> "Success" -> vanish -> rediscover loop,
+    recorded in the orphan-removal comment above. Nothing here touches either.
+    """
+    entity_registry = er.async_get(hass)
+    # list() because the loop mutates the registry, as the device-id migration also does.
+    for ent in list(er.async_entries_for_config_entry(entity_registry, entry.entry_id)):
+        if ent.unique_id == RETIRED_UPDATE_UNIQUE_ID:
+            _LOGGER.info(
+                "Removing the retired Dashie update entity %s; integration updates "
+                "come through HACS", ent.entity_id,
+            )
+            entity_registry.async_remove(ent.entity_id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -169,6 +215,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # created with the new unique_id and inherit existing entity_ids from the registry.
     if coordinator.last_update_success and coordinator.data:
         await _async_migrate_device_id_if_needed(hass, entry, coordinator)
+
+    # Before platform setup, for the same reason the migration above runs here: the
+    # registry should be in its final shape before HA decides what each platform provides.
+    _async_remove_retired_update_entity(hass, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

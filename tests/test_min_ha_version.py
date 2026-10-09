@@ -46,8 +46,12 @@ FLOOR_EVIDENCE = {
 # FLOOR_EVIDENCE fails the last test on purpose.
 PLATFORMS_PREDATING_FLOOR = {
     "BINARY_SENSOR", "BUTTON", "CAMERA", "IMAGE", "MEDIA_PLAYER", "NUMBER",
-    "SELECT", "SENSOR", "SWITCH", "TEXT", "UPDATE",
+    "SELECT", "SENSOR", "SWITCH", "TEXT",
 }
+# "UPDATE" was removed here on 2026-10-09 with Platform.UPDATE itself. Note the test
+# below would NOT have caught the stale entry: it is one-directional, asserting that
+# every platform USED is accounted for and never that every platform LISTED is still
+# used. Same shape as a stale allow-list exemption - invisible to a one-way check.
 
 
 def _version_tuple(v: str) -> tuple[int, ...]:
