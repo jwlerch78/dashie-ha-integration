@@ -31,10 +31,33 @@ Its absence is what shipped `v1.4.15` broken.
 ## The release
 
 ```bash
-# 1. Pre-flight — all three must be clean before anything is pushed.
+# 1. Pre-flight — all FOUR must be clean before anything is pushed.
 git status --short                    # nothing uncommitted
 git log --oneline origin/main..main   # exactly what you intend to publish
-.venv/bin/python -m pytest -q         # green
+
+# 1a. 🔴 ASSERT THE SUITE LOADS THE TREE YOU ARE RELEASING. Never skip this.
+#     tests/conftest.py symlinks the integration into the venv under `if not _LINK.exists()`,
+#     so the FIRST tree to run the suite in a given venv wins PERMANENTLY and SILENTLY.
+#     The shared .venv's link has pointed at the main clone since 2026-06-25 — and that clone
+#     sits on a spike branch. A releaser who skips this gets three green checks that describe
+#     a DIFFERENT tree than the one being tagged. (O/X/HA, 2026-10-09.)
+#     NOTE: use the VENV's python — the system python3 cannot import phacc and the line
+#     would die with ImportError, i.e. a gate that cannot run. (Caught writing this. O.)
+LINK=$(.venv/bin/python -c "import pytest_homeassistant_custom_component as p, pathlib; \
+  print(pathlib.Path(p.__file__).parent/'testing_config'/'custom_components'/'dashie')")
+echo "suite will load: $(readlink "$LINK")"
+echo "you are releasing: $(git rev-parse --show-toplevel)/custom_components/dashie"
+#     These two MUST be the same path. If they are not, STOP — do not "fix" the shared link
+#     (another session may be relying on it). Build your own venv instead:
+#       python3 -m venv /tmp/rel-venv && /tmp/rel-venv/bin/pip install -r requirements_test.txt
+#     and run pytest from it, so conftest creates ITS link to THIS tree.
+
+.venv/bin/python -m pytest -q         # green — and only meaningful if 1a matched
+#     ⚠️ A green here is green on the DECLARED FLOOR (hacs.json `homeassistant`, currently
+#     2025.1.0). It is NOT evidence the integration works on current HA. Measured 2026-10-09:
+#     on HA 2026.9.3 the UNMODIFIED suite is 25 failed / 74 passed / 23 errors, because
+#     aioresponses has no release compatible with the aiohttp that 2026.9 pulls. We ship to
+#     2026.9.x boxes and the suite has never passed on one. Treat "green" accordingly.
 
 # 2. Bump the manifest and commit it BEFORE tagging.
 #    A tag whose manifest disagrees with the version is the failure mode step 5 catches.
