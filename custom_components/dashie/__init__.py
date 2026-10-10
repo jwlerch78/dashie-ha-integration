@@ -75,6 +75,8 @@ PLATFORMS: list[Platform] = [
 # real update entity that can. Held as a constant because the cleanup below has to match
 # the id the DELETED platform used to register (update.py:147, f"{DOMAIN}_integration_update").
 RETIRED_UPDATE_UNIQUE_ID = f"{DOMAIN}_integration_update"
+# The registry key is (platform, domain, unique_id); match on all the parts we know.
+RETIRED_UPDATE_DOMAIN = "update"
 
 # Service schemas
 SERVICE_SEND_COMMAND = "send_command"
@@ -138,6 +140,10 @@ def _async_remove_retired_update_entity(hass: HomeAssistant, entry: ConfigEntry)
     * `er.async_entries_for_config_entry` is entry-scoped, so a "do it once on the first
       entry" optimisation would miss the row in precisely the multi-tablet households
       where the ownership migration bites.
+    * The one case this does NOT cover (X, review of 6cf376a): a config entry that is
+      DISABLED rather than removed never sets up, so if it owned the row, the row survives
+      until the entry is re-enabled - at which point this runs and removes it. Rare and
+      self-healing, so it is recorded rather than coded around.
     * It is naturally idempotent: the second pass finds nothing. Note it removes only
       what THIS pass found in the registry and never a remembered entity_id - on the
       declared floor (2025.1) `async_remove` does `self.entities.pop(entity_id)` and
@@ -146,11 +152,18 @@ def _async_remove_retired_update_entity(hass: HomeAssistant, entry: ConfigEntry)
     One ENTITY only, never a device and never a config entry: removing a config entry
     with no registered entities caused an add -> "Success" -> vanish -> rediscover loop,
     recorded in the orphan-removal comment above. Nothing here touches either.
+
+    The `domain` half of the match is not redundant: the registry's uniqueness key is
+    (platform, domain, unique_id), so this unique_id could legitimately be held by a
+    future Dashie entity in another domain. Matching on unique_id alone would remove that
+    one too, and it would also be WIDER than the test asserting it (which looks the row up
+    as ("update", DOMAIN, unique_id)) - a test stricter than its code cannot notice the
+    code widening.
     """
     entity_registry = er.async_get(hass)
     # list() because the loop mutates the registry, as the device-id migration also does.
     for ent in list(er.async_entries_for_config_entry(entity_registry, entry.entry_id)):
-        if ent.unique_id == RETIRED_UPDATE_UNIQUE_ID:
+        if ent.domain == RETIRED_UPDATE_DOMAIN and ent.unique_id == RETIRED_UPDATE_UNIQUE_ID:
             _LOGGER.info(
                 "Removing the retired Dashie update entity %s; integration updates "
                 "come through HACS", ent.entity_id,

@@ -42,6 +42,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dashie import (
+    RETIRED_UPDATE_DOMAIN,
     RETIRED_UPDATE_UNIQUE_ID,
     _async_remove_retired_update_entity,
 )
@@ -101,6 +102,7 @@ def test_the_retired_unique_id_is_the_shipped_wire_value() -> None:
     the suite would notice.
     """
     assert RETIRED_UPDATE_UNIQUE_ID == RETIRED_UID
+    assert RETIRED_UPDATE_DOMAIN == "update"
 
 
 async def test_the_retired_row_is_removed_not_left_unavailable(hass: HomeAssistant) -> None:
@@ -136,6 +138,31 @@ async def test_it_removes_only_that_row(hass: HomeAssistant) -> None:
     assert registry.async_get_entity_id("update", DOMAIN, RETIRED_UID) is None
     assert registry.async_get_entity_id("sensor", DOMAIN, "dev1_battery") == sibling, (
         "the cleanup removed an unrelated entity; it must match the retired unique_id exactly"
+    )
+
+
+async def test_it_matches_the_domain_too_not_the_unique_id_alone(hass: HomeAssistant) -> None:
+    """The registry key is (platform, domain, unique_id) - match on every part we know.
+
+    Raised by X in review of 6cf376a: the production match tested `unique_id` alone while
+    this file looks the row up as ("update", DOMAIN, unique_id), so the code was WIDER than
+    the test asserting it. Nothing holds this unique_id in another domain today - every
+    other Dashie entity is device-prefixed - so this leg is what makes the narrowing
+    stick rather than evidence of a live bug. A test stricter than its code cannot notice
+    the code widening in that dimension.
+    """
+    entry = _entry(hass, "dev1", "Kitchen")
+    _register(hass, entry, "update", RETIRED_UID)
+    # Same unique_id, DIFFERENT domain. Legitimate: the registry allows it.
+    impostor = _register(hass, entry, "sensor", RETIRED_UID)
+
+    await _setup(hass, entry, "dev1")
+
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id("update", DOMAIN, RETIRED_UID) is None
+    assert registry.async_get_entity_id("sensor", DOMAIN, RETIRED_UID) == impostor, (
+        "an entity sharing the unique_id in another domain was removed; the match must "
+        "be on (domain, unique_id), not unique_id alone"
     )
 
 
