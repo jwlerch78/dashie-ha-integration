@@ -8,11 +8,12 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aioresponses import aioresponses
 from homeassistant.components import bluetooth
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from .fake_http import FakeResponse, FakeSession, patch_sessions
 
 from custom_components.dashie.registry_compat import all_devices
 from custom_components.dashie.ble_scanner import _parse_advert, scanner_source
@@ -34,18 +35,23 @@ async def _setup_entry(hass: HomeAssistant, device_info: dict | None = None) -> 
         data={"host": IPV4, "port": 2323, "device_id": DEVICE_ID},
     )
     entry.add_to_hass(hass)
-    with aioresponses() as mock, patch(
+    fake = FakeSession({
+        "cmd=deviceInfo": (asyncio.TimeoutError() if device_info is None
+                           else FakeResponse(payload=device_info)),
+        "cmd=getRtspStatus": asyncio.TimeoutError(),
+        "cmd=getRtspConfig": asyncio.TimeoutError(),
+    }, default=asyncio.TimeoutError())
+    with patch_sessions(fake), patch(
         "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
         AsyncMock(return_value=True),
     ):
-        if device_info is None:
-            mock.get(f"{BASE}/?cmd=deviceInfo&type=json", exception=asyncio.TimeoutError(), repeat=True)
-        else:
-            mock.get(f"{BASE}/?cmd=deviceInfo&type=json", payload=device_info, repeat=True)
-        mock.get(f"{BASE}/?cmd=getRtspStatus", exception=asyncio.TimeoutError(), repeat=True)
-        mock.get(f"{BASE}/?cmd=getRtspConfig", exception=asyncio.TimeoutError(), repeat=True)
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+    # ⚠️ This file never FAILED on HA 2026.9.3 even with aioresponses dead, because
+    # nothing here visited the mock at all - 0 occurrences of its breakage. A mock that
+    # is neither working nor failing, just unvisited, is caught by nothing: no red to
+    # investigate and no fidelity check to trip. So assert it was reached.
+    assert fake.requests, "setup made no HTTP request - the injection is not in effect"
     return entry
 
 
