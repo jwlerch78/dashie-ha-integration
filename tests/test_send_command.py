@@ -19,21 +19,21 @@ What these tests pin:
 """
 import asyncio
 import logging
-import re
 
 import aiohttp
 import pytest
-from aioresponses import aioresponses
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_capture_events
+
+from .fake_http_wiring import patch_sessions
+from .fake_http import FakeResponse, FakeSession
 
 from custom_components.dashie.coordinator import DashieCoordinator
 
 from .test_service_targets import HOSTS, two_devices  # noqa: F401 (fixture)
 
 HOST = "192.168.23.20"
-URL = re.compile(rf"http://{re.escape(HOST)}:2323/.*")
 LOGGER = "custom_components.dashie.coordinator"
 REFUSAL = {"status": "ERROR", "message": "Reboot failed: requires root"}
 
@@ -49,7 +49,21 @@ async def coordinator(hass: HomeAssistant):
         await coord._session.close()
 
 
-# (name, aioresponses kwargs, send_command result, exact log line or prefix)
+# (name, response spec, send_command result, exact log line or prefix)
+# The spec keys match FakeResponse's parameters, except `exception`, which makes
+# the request raise instead of answering.
+def _outcome(spec):
+    """A SHAPES row's response spec as a fake outcome: a response, or a raise."""
+    if "exception" in spec:
+        return spec["exception"]
+    return FakeResponse(**spec)
+
+
+def _one(spec) -> FakeSession:
+    """The single device answers `spec`. Unrouted traffic raises, not answers."""
+    return FakeSession({HOST: _outcome(spec)})
+
+
 SHAPES = [
     ("400 json refusal", {"status": 400, "payload": REFUSAL}, False,
      f"Command rebootDevice refused by {HOST}: Reboot failed: requires root"),
@@ -75,9 +89,10 @@ SHAPES = [
 async def test_send_command_bool_path_and_its_log_lines_are_unchanged(
     coordinator, caplog, name, response, expected, log
 ):
-    with aioresponses() as mock, caplog.at_level(logging.DEBUG, logger=LOGGER):
-        mock.get(URL, **response)
+    fake = _one(response)
+    with patch_sessions(fake), caplog.at_level(logging.DEBUG, logger=LOGGER):
         assert await coordinator.send_command("rebootDevice") is expected
+    assert fake.requests, f"{name}: nothing reached the fake"
     lines = [r.getMessage() for r in caplog.records if r.name == LOGGER and "rebootDevice" in r.getMessage()]
     assert lines, f"{name}: no log line"
     assert lines[-1].startswith(log), f"{name}: log changed: {lines[-1]!r}"
@@ -86,8 +101,7 @@ async def test_send_command_bool_path_and_its_log_lines_are_unchanged(
 async def test_a_refusal_raises_with_the_device_and_its_message(coordinator):
     from custom_components.dashie.commands import DashieCommandError
 
-    with aioresponses() as mock:
-        mock.get(URL, status=400, payload=REFUSAL)
+    with patch_sessions(_one({"status": 400, "payload": REFUSAL})):
         with pytest.raises(DashieCommandError) as err:
             await coordinator.async_command("rebootDevice")
     assert isinstance(err.value, HomeAssistantError)
@@ -97,8 +111,7 @@ async def test_a_refusal_raises_with_the_device_and_its_message(coordinator):
 async def test_an_offline_device_raises_naming_the_failure(coordinator):
     from custom_components.dashie.commands import DashieCommandError
 
-    with aioresponses() as mock:
-        mock.get(URL, exception=asyncio.TimeoutError())
+    with patch_sessions(_one({"exception": asyncio.TimeoutError()})):
         with pytest.raises(DashieCommandError) as err:
             await coordinator.async_command("rebootDevice")
     assert str(err.value) == "Kitchen Tablet did not respond to rebootDevice (TimeoutError)"
@@ -107,15 +120,13 @@ async def test_an_offline_device_raises_naming_the_failure(coordinator):
 async def test_an_error_page_raises_as_a_refusal_with_its_status(coordinator):
     from custom_components.dashie.commands import DashieCommandError
 
-    with aioresponses() as mock:
-        mock.get(URL, status=500, body="<html>oops</html>", content_type="text/html")
+    with patch_sessions(_one({"status": 500, "body": "<html>oops</html>", "content_type": "text/html"})):
         with pytest.raises(DashieCommandError, match=r"^Kitchen Tablet refused rebootDevice: HTTP 500"):
             await coordinator.async_command("rebootDevice")
 
 
 async def test_a_successful_command_does_not_raise(coordinator):
-    with aioresponses() as mock:
-        mock.get(URL, status=200, payload={"status": "OK"})
+    with patch_sessions(_one({"status": 200, "payload": {"status": "OK"}})):
         assert await coordinator.async_command("rebootDevice") is None
 
 
@@ -124,29 +135,29 @@ async def test_a_button_press_on_a_refusing_device_raises(coordinator):
     from custom_components.dashie.commands import DashieCommandError
 
     button = DashieRebootButton(coordinator, "dev-kitchen")
-    with aioresponses() as mock:
-        mock.get(URL, status=400, payload=REFUSAL)
+    with patch_sessions(_one({"status": 400, "payload": REFUSAL})):
         with pytest.raises(DashieCommandError, match="requires root"):
             await button.async_press()
 
 
-def _speak_calls(mock, host):
-    return sum(len(c) for (m, u), c in mock.requests.items()
-               if u.host == host and u.query.get("cmd") == "textToSpeech")
+def _speak_calls(fake: FakeSession, host: str) -> int:
+    return sum(1 for url in fake.requests
+               if host in url and "cmd=textToSpeech" in url)
 
 
 async def test_a_service_reaches_every_device_before_raising_once(hass, two_devices):  # noqa: F811
     from custom_components.dashie.commands import DashieCommandError
 
-    with aioresponses() as mock:
-        mock.get(re.compile(rf"http://{re.escape(HOSTS['a'])}:2323/.*"),
-                 status=400, payload={"status": "ERROR", "message": "TTS unavailable"}, repeat=True)
-        mock.get(re.compile(rf"http://{re.escape(HOSTS['b'])}:2323/.*"),
-                 exception=asyncio.TimeoutError(), repeat=True)
+    fake = FakeSession({
+        HOSTS["a"]: FakeResponse(status=400,
+                                 payload={"status": "ERROR", "message": "TTS unavailable"}),
+        HOSTS["b"]: asyncio.TimeoutError(),
+    })
+    with patch_sessions(fake):
         with pytest.raises(DashieCommandError) as err:
             await hass.services.async_call("dashie", "speak", {"message": "hi"}, blocking=True)
-    assert _speak_calls(mock, HOSTS["a"]) == 1
-    assert _speak_calls(mock, HOSTS["b"]) == 1
+    assert _speak_calls(fake, HOSTS["a"]) == 1
+    assert _speak_calls(fake, HOSTS["b"]) == 1
     message = str(err.value)
     assert "Tablet A refused textToSpeech: TTS unavailable" in message
     assert "Tablet B did not respond to textToSpeech (TimeoutError)" in message
@@ -156,17 +167,17 @@ async def test_one_failing_device_does_not_stop_the_others(hass, two_devices):  
     from custom_components.dashie.commands import DashieCommandError
 
     entities, _ = two_devices
-    with aioresponses() as mock:
-        mock.get(re.compile(rf"http://{re.escape(HOSTS['a'])}:2323/.*"),
-                 exception=aiohttp.ClientConnectionError("Connection refused"), repeat=True)
-        mock.get(re.compile(rf"http://{re.escape(HOSTS['b'])}:2323/.*"),
-                 payload={"status": "OK"}, repeat=True)
+    fake = FakeSession({
+        HOSTS["a"]: aiohttp.ClientConnectionError("Connection refused"),
+        HOSTS["b"]: FakeResponse(payload={"status": "OK"}),
+    })
+    with patch_sessions(fake):
         with pytest.raises(DashieCommandError) as err:
             await hass.services.async_call(
                 "dashie", "speak", {"device_id": [entities["a"], entities["b"]], "message": "hi"},
                 blocking=True,
             )
-    assert _speak_calls(mock, HOSTS["b"]) == 1
+    assert _speak_calls(fake, HOSTS["b"]) == 1
     assert "Tablet B" not in str(err.value)
 
 
@@ -185,13 +196,14 @@ async def test_continue_on_error_skips_past_a_refused_command(hass, two_devices)
         ]),
         "test", "dashie",
     )
-    with aioresponses() as mock:
-        mock.get(re.compile(rf"http://{re.escape(HOSTS['a'])}:2323/.*"),
-                 status=400, payload={"status": "ERROR", "message": "nope"}, repeat=True)
+    fake = FakeSession({
+        HOSTS["a"]: FakeResponse(status=400, payload={"status": "ERROR", "message": "nope"}),
+    })
+    with patch_sessions(fake):
         await script.async_run(context=None)
         await hass.async_block_till_done()
     assert len(events) == 1, "continue_on_error did not carry the script past the refusal"
-    assert _speak_calls(mock, HOSTS["a"]) == 1
+    assert _speak_calls(fake, HOSTS["a"]) == 1
 
 
 async def test_without_continue_on_error_the_script_stops_at_that_step(hass, two_devices):  # noqa: F811
@@ -209,9 +221,10 @@ async def test_without_continue_on_error_the_script_stops_at_that_step(hass, two
         ]),
         "test", "dashie",
     )
-    with aioresponses() as mock:
-        mock.get(re.compile(rf"http://{re.escape(HOSTS['a'])}:2323/.*"),
-                 status=400, payload={"status": "ERROR", "message": "nope"}, repeat=True)
+    fake = FakeSession({
+        HOSTS["a"]: FakeResponse(status=400, payload={"status": "ERROR", "message": "nope"}),
+    })
+    with patch_sessions(fake):
         with pytest.raises(HomeAssistantError, match="Tablet A refused textToSpeech: nope"):
             await script.async_run(context=None)
         await hass.async_block_till_done()
@@ -225,21 +238,18 @@ async def test_background_pushes_never_raise_and_log_once_per_change(coordinator
         return [r.getMessage() for r in caplog.records if r.getMessage().startswith("DROP: timer push")]
 
     with caplog.at_level(logging.INFO):
-        with aioresponses() as mock:
-            mock.get(URL, exception=asyncio.TimeoutError(), repeat=True)
+        with patch_sessions(_one({"exception": asyncio.TimeoutError()})):
             for _ in range(3):
                 await async_push_to_all([coordinator], "showTimer", what="timer")
         assert drops() == ["DROP: timer push to Kitchen Tablet failed: "
                            "Kitchen Tablet did not respond to showTimer (TimeoutError)"]
 
-        with aioresponses() as mock:
-            mock.get(URL, payload={"status": "OK"}, repeat=True)
+        with patch_sessions(_one({"payload": {"status": "OK"}})):
             await async_push_to_all([coordinator], "showTimer", what="timer")
             await async_push_to_all([coordinator], "showTimer", what="timer")
         assert len(drops()) == 1
 
-        with aioresponses() as mock:
-            mock.get(URL, exception=asyncio.TimeoutError(), repeat=True)
+        with patch_sessions(_one({"exception": asyncio.TimeoutError()})):
             await async_push_to_all([coordinator], "showTimer", what="timer")
         assert len(drops()) == 2, "a new failure after recovery must be logged again"
 

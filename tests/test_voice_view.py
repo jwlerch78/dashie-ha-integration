@@ -15,8 +15,10 @@ Background: `.reference/build-plans/20260716_HA_GATEWAY_PAYLOAD_ALLOWLIST_ROT.md
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from aioresponses import aioresponses
 from homeassistant.core import HomeAssistant
+
+from .fake_http_wiring import patch_sessions
+from .fake_http import FakeResponse, FakeSession
 
 from custom_components.dashie.voice_view import BRAIN_URL, DashieVoiceConverseView
 
@@ -46,25 +48,27 @@ def _request(hass: HomeAssistant, body: dict) -> MagicMock:
     return req
 
 
-def _sent_to_brain(mock: aioresponses) -> dict:
-    """The JSON body of the single POST the gateway made to the brain."""
-    calls = [c for key, c in mock.requests.items() if str(key[1]).startswith(BRAIN_URL)]
-    assert calls and calls[0], f"gateway never POSTed to the brain: {list(mock.requests)}"
-    return calls[0][0].kwargs["json"]
+def _brain(body: bytes | None = None) -> FakeSession:
+    """A fake whose only route is the brain. Unrouted traffic RAISES rather than
+    being quietly answered, so a request to the wrong URL fails loudly here."""
+    if body is None:
+        return FakeSession({BRAIN_URL: FakeResponse(status=200, payload=TURN)})
+    return FakeSession({BRAIN_URL: FakeResponse(
+        status=200, body=body.decode(), content_type="application/x-ndjson")})
 
 
 async def test_cloud_route_forwards_every_field_the_tablet_sent(hass: HomeAssistant) -> None:
     """THE end-to-end guard. Measured 2026-07-16: tablet sent 11, brain got 7 — silently."""
-    with aioresponses() as mock, patch(
+    fake = _brain()
+    with patch_sessions(fake), patch(
         "custom_components.dashie.voice_view.get_account_credential",
         AsyncMock(return_value="jwt"),
     ), patch(
         "custom_components.dashie.voice_view.get_voice_config",
         AsyncMock(return_value={"route": "cloud"}),
     ):
-        mock.post(BRAIN_URL, status=200, payload=TURN)
         resp = await DashieVoiceConverseView().post(_request(hass, dict(TABLET_BODY)))
-        sent = _sent_to_brain(mock)
+        sent = fake.sent_json(BRAIN_URL)
 
     assert resp.status == 200
     assert json.loads(resp.body) == TURN
@@ -91,13 +95,13 @@ async def test_cloud_route_pins_retain_mode_and_strips_the_internal_route(
     """§17 on the wire: the brain must be told 'caller' no matter what the caller asked for,
     and `options.route` is ours — it must not reach the brain."""
     body = {**TABLET_BODY, "options": {"model": "m", "retain_mode": "server", "route": "cloud"}}
-    with aioresponses() as mock, patch(
+    fake = _brain()
+    with patch_sessions(fake), patch(
         "custom_components.dashie.voice_view.get_account_credential",
         AsyncMock(return_value="jwt"),
     ):
-        mock.post(BRAIN_URL, status=200, payload=TURN)
         await DashieVoiceConverseView().post(_request(hass, body))
-        sent = _sent_to_brain(mock)
+        sent = fake.sent_json(BRAIN_URL)
 
     assert sent["options"] == {"model": "m", "retain_mode": "caller"}
 
@@ -106,16 +110,16 @@ async def test_an_unknown_future_field_reaches_the_brain(hass: HomeAssistant) ->
     """Pass-through must hold through the VIEW, not just the builder — every field that was
     ever silently dropped began as one this gateway had never heard of."""
     body = {"text": "hi", "some_field_added_to_voicerequest_next_year": {"nested": [1, 2]}}
-    with aioresponses() as mock, patch(
+    fake = _brain()
+    with patch_sessions(fake), patch(
         "custom_components.dashie.voice_view.get_account_credential",
         AsyncMock(return_value="jwt"),
     ), patch(
         "custom_components.dashie.voice_view.get_voice_config",
         AsyncMock(return_value={"route": "cloud"}),
     ):
-        mock.post(BRAIN_URL, status=200, payload=TURN)
         await DashieVoiceConverseView().post(_request(hass, body))
-        sent = _sent_to_brain(mock)
+        sent = fake.sent_json(BRAIN_URL)
 
     assert sent["some_field_added_to_voicerequest_next_year"] == {"nested": [1, 2]}
 
@@ -184,14 +188,14 @@ async def test_header_present_on_the_streaming_path(hass: HomeAssistant) -> None
     prepare), not a body field."""
     body = {**TABLET_BODY, "stream": True}
     ndjson = b'{"kind":"final","turn":{"ok":true}}\n'
-    with aioresponses() as mock, patch(
+    fake = _brain(ndjson)
+    with patch_sessions(fake), patch(
         "custom_components.dashie.voice_view.get_account_credential",
         AsyncMock(return_value="jwt"),
     ), patch(
         "custom_components.dashie.voice_view.get_voice_config",
         AsyncMock(return_value={"route": "cloud"}),
     ):
-        mock.post(BRAIN_URL, status=200, body=ndjson)
         req = _request(hass, body)
         req.transport = MagicMock()
         with patch("aiohttp.web.StreamResponse.prepare", AsyncMock()), patch(
@@ -207,21 +211,21 @@ async def test_streaming_path_forwards_the_full_payload(hass: HomeAssistant) -> 
     a drop here would be invisible to every non-streaming test."""
     body = {**TABLET_BODY, "stream": True}
     ndjson = b'{"kind":"stage","stage":"routed"}\n{"kind":"final","turn":{"ok":true}}\n'
-    with aioresponses() as mock, patch(
+    fake = _brain(ndjson)
+    with patch_sessions(fake), patch(
         "custom_components.dashie.voice_view.get_account_credential",
         AsyncMock(return_value="jwt"),
     ), patch(
         "custom_components.dashie.voice_view.get_voice_config",
         AsyncMock(return_value={"route": "cloud"}),
     ):
-        mock.post(BRAIN_URL, status=200, body=ndjson)
         req = _request(hass, body)
         req.transport = MagicMock()  # StreamResponse.prepare() needs a live transport
         with patch("aiohttp.web.StreamResponse.prepare", AsyncMock()), patch(
             "aiohttp.web.StreamResponse.write", AsyncMock()
         ), patch("aiohttp.web.StreamResponse.write_eof", AsyncMock()):
             await DashieVoiceConverseView().post(req)
-        sent = _sent_to_brain(mock)
+        sent = fake.sent_json(BRAIN_URL)
 
     dropped = [k for k in TABLET_BODY if k not in sent]
     assert not dropped, f"streaming path dropped: {dropped}"

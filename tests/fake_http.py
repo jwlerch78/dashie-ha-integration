@@ -79,6 +79,33 @@ class FakeResponse:
         # distinction our callers rely on.
         return jsonlib.loads(self._body)
 
+    @property
+    def content(self):
+        """Line iteration over the body, as `async for line in resp.content`.
+
+        aiohttp's StreamReader yields each line *including* its trailing newline
+        (it is readline(), not splitlines()). Dropping the newline here would be
+        invisible to a JSON parser and wrong for anything counting bytes, so the
+        fidelity control compares this against a real server line for line.
+        """
+        body = self._body
+
+        class _Lines:
+            def __aiter__(self):
+                async def gen():
+                    buf = body.encode() if isinstance(body, str) else body
+                    start = 0
+                    while start < len(buf):
+                        nl = buf.find(b"\n", start)
+                        if nl == -1:
+                            yield buf[start:]
+                            return
+                        yield buf[start:nl + 1]
+                        start = nl + 1
+                return gen()
+
+        return _Lines()
+
     def raise_for_status(self) -> None:
         if self.status >= 400:
             raise aiohttp.ClientResponseError(
@@ -115,7 +142,11 @@ class FakeSession:
         self._routes = routes or {}
         self._default = default
         self.closed = False
+        # `requests` is the URL log, and the cheap injection check: if it is empty,
+        # nothing reached the fake. `calls` additionally keeps what was SENT, for
+        # tests that assert on a request body rather than on the response.
         self.requests: list[str] = []
+        self.calls: list[dict] = []
 
     def _match(self, url: str):
         for key, outcome in self._routes.items():
@@ -129,74 +160,35 @@ class FakeSession:
             "Add a route, or pass default= deliberately."
         )
 
+    def _record(self, method, url, kwargs):
+        self.requests.append(url)
+        self.calls.append({
+            "method": method, "url": url,
+            "json": kwargs.get("json"), "headers": kwargs.get("headers"),
+        })
+
+    def sent_json(self, url_contains=""):
+        """The JSON body of the single matching request. Raises if not exactly one.
+
+        Deliberately strict: "the first of several" hides a duplicate send, which is
+        the kind of bug a gateway test exists to catch.
+        """
+        hits = [c for c in self.calls
+                if url_contains in c["url"] and c["json"] is not None]
+        assert len(hits) == 1, (
+            f"expected exactly 1 JSON request matching {url_contains!r}, got "
+            f"{len(hits)}: {[c['url'] for c in self.calls]}"
+        )
+        return hits[0]["json"]
+
     def get(self, url, params=None, **kwargs):
         full = str(URL(url).with_query(params)) if params else str(url)
-        self.requests.append(full)
+        self._record("GET", full, kwargs)
         return _Ctx(self._match(full))
 
     def post(self, url, **kwargs):
-        self.requests.append(str(url))
+        self._record("POST", str(url), kwargs)
         return _Ctx(self._match(str(url)))
 
     async def close(self) -> None:
         self.closed = True
-
-
-def patch_sessions(fake: FakeSession):
-    """Route EVERY way the integration gets an HTTP session to `fake`.
-
-    For when the coordinator is built *inside* the code under test (e.g. by
-    `async_setup_entry`), so there is no instance to assign `_session` on. Where you
-    do have the instance, prefer `coord._session = fake`: fewer moving parts.
-
-    Assert on `fake.requests` afterwards. A test whose injection silently misses runs
-    against a real (failing) session and can still pass on assertions that do not
-    depend on the response, which is how these tests passed on HA 2026.9.3 with
-    aioresponses dead.
-    """
-    from contextlib import ExitStack, contextmanager
-    from unittest.mock import AsyncMock, patch
-
-    from custom_components.dashie.coordinator import DashieCoordinator
-
-    @contextmanager
-    def _both():
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(
-                DashieCoordinator, "_get_session", AsyncMock(return_value=fake)))
-            # The integration takes a session TWO ways, and covering only the first
-            # leaves real sockets open. The coordinator builds its own
-            # (coordinator.py:84); addon_bridge/camera/config_flow/image ask HA for the
-            # shared one. A successful first poll reaches `_async_register_services`,
-            # whose 1s timer pushes to devices down the SECOND path, so a test that
-            # patches only the coordinator trips HA 2026.9's socket guard at teardown.
-            # 🔴 PATCH WHERE THE NAME IS LOOKED UP, NOT WHERE IT IS DEFINED. Each of
-            # these modules does `from ...aiohttp_client import async_get_clientsession`
-            # at import time, so patching the helpers module leaves their own binding
-            # untouched and a REAL session is still built. Measured: with only the
-            # helpers-module patch, setup still reached aiohttp's connector
-            # (aiohappyeyeballs._connect_sock) from a detached task and tripped HA
-            # 2026.9's socket guard at teardown.
-            # create=False is deliberate: if one of these stops importing the name, the
-            # patch must FAIL rather than quietly cover nothing.
-            for mod in ("addon_bridge", "camera", "image", "config_flow", "voice_view"):
-                stack.enter_context(patch(
-                    f"custom_components.dashie.{mod}.async_get_clientsession",
-                    return_value=fake, create=False))
-            # ⚠️ A THIRD consumer kind, and this one is a BEHAVIOR stub, not a session
-            # injection - do not mistake it for coverage. `go2rtc_manager` builds its
-            # session inline (go2rtc_manager.py:182), so there is no seam to inject at
-            # without changing production code. `async_setup_entry` awaits
-            # `manager.detect()` at __init__.py:275, which probes FOUR real endpoints
-            # (localhost:1984, 127.0.0.1:1984, two Frigate hostnames). Returning False
-            # states "no go2rtc here", which is what those probes would conclude in a
-            # test environment anyway.
-            # This only became reachable once the HTTP mock worked: a failed first poll
-            # used to short-circuit setup before line 275, so the real connections were
-            # hidden by the broken mock rather than absent.
-            stack.enter_context(patch(
-                "custom_components.dashie.go2rtc_manager.Go2RtcManager.detect",
-                AsyncMock(return_value=False)))
-            yield fake
-
-    return _both()

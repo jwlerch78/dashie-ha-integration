@@ -10,7 +10,7 @@ These reproduce the real field failures we hit in June 2026:
 
 The flow's ``_fetch_device_info`` takes HA's SHARED session
 (``config_flow.py:348``), unlike the coordinator's, which builds its own
-(``coordinator.py:84``). Both are routed by ``tests/fake_http.patch_sessions``,
+(``coordinator.py:84``). Both are routed by ``tests/fake_http_wiring.patch_sessions``,
 which patches the shared-session name **in each module that imported it** as well
 as the coordinator's accessor - patching only where the helper is defined leaves a
 real session in place. (Was ``aioresponses``, which has no release compatible with
@@ -32,8 +32,8 @@ except ImportError:  # older HA (e.g. 2025.1 in the local test harness)
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .fake_http import FakeResponse, FakeSession, patch_sessions
-
+from .fake_http_wiring import patch_sessions
+from .fake_http import FakeResponse, FakeSession
 DOMAIN = "dashie"
 DEVICE_ID = "a83e167a70e648255f71a1744d25f740"
 IPV4 = "192.168.23.96"

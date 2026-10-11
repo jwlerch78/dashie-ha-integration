@@ -180,6 +180,70 @@ async def _outcome(coord) -> tuple:
     return ("ok", str(data.get("deviceID")))
 
 
+# NDJSON bodies, for the streaming brain path. Each row is the raw body and the exact
+# list of lines an iteration must yield.
+STREAM_BODIES = [
+    ("two lines", b'{"kind":"stage"}\n{"kind":"final"}\n'),
+    ("no trailing newline", b'{"kind":"final"}'),
+    ("blank line between", b'{"a":1}\n\n{"b":2}\n'),
+    ("empty body", b''),
+]
+
+
+@pytest.mark.parametrize("name,body", STREAM_BODIES, ids=[s[0] for s in STREAM_BODIES])
+async def test_the_fake_streams_lines_like_a_real_server(socket_enabled, name, body) -> None:
+    """`async for line in resp.content` must yield byte-identical lines.
+
+    Compared at the RESPONSE level rather than through production code, unlike the
+    other cases here, and deliberately: the claim being pinned is "our line iteration
+    equals aiohttp's", so aiohttp's own reader is the only thing worth comparing to.
+    The subtlety is that aiohttp yields each line WITH its trailing newline (it is
+    readline(), not splitlines()), which a JSON parser would never notice.
+    """
+    async def handler(request: web.Request) -> web.Response:
+        return web.Response(status=200, body=body, content_type="application/x-ndjson")
+
+    app = web.Application()
+    app.router.add_post("/", handler)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"http://{server.host}:{server.port}/") as resp:
+                real = [line async for line in resp.content]
+    finally:
+        await server.close()
+
+    fake = FakeSession({"/": FakeResponse(status=200, body=body.decode(),
+                                          content_type="application/x-ndjson")})
+    async with fake.post("http://fake/") as resp:
+        fake_lines = [line async for line in resp.content]
+
+    assert fake_lines == real, (
+        f"{name}: line iteration differs.\n  real: {real}\n  fake: {fake_lines}\n"
+        "Fix the fake - never the assertion."
+    )
+
+
+async def test_the_fake_records_what_was_sent() -> None:
+    """`sent_json` is the fake's own bookkeeping, so it is pinned here, not by fidelity.
+
+    Strict by design: it requires EXACTLY one matching request, because "the first of
+    several" would hide a duplicate send - the bug a gateway test exists to catch.
+    """
+    fake = FakeSession({"brain": FakeResponse(payload={"ok": True})})
+    async with fake.post("http://brain/converse", json={"text": "hi"}, headers={"H": "v"}):
+        pass
+    assert fake.sent_json("brain") == {"text": "hi"}
+    assert fake.calls[0]["headers"] == {"H": "v"}
+
+    async with fake.post("http://brain/converse", json={"text": "again"}):
+        pass
+    with pytest.raises(AssertionError, match="expected exactly 1"):
+        fake.sent_json("brain")
+
+
 async def test_the_fake_reproduces_a_timeout(hass: HomeAssistant) -> None:
     """Timeouts are a raised exception, not a response — pinned separately.
 
