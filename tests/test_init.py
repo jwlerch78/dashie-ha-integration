@@ -13,8 +13,8 @@ from homeassistant.core import CoreState, HomeAssistant
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .fake_http import FakeResponse, FakeSession, patch_sessions
-
+from .fake_http_wiring import patch_sessions
+from .fake_http import FakeResponse, FakeSession
 DOMAIN = "dashie"
 DEVICE_ID = "a83e167a70e648255f71a1744d25f740"
 IPV4 = "192.168.23.96"

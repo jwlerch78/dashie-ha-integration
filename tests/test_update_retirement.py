@@ -40,8 +40,8 @@ from homeassistant.helpers import entity_registry as er
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .fake_http import FakeResponse, FakeSession, patch_sessions
-
+from .fake_http_wiring import patch_sessions
+from .fake_http import FakeResponse, FakeSession
 from custom_components.dashie import (
     RETIRED_UPDATE_DOMAIN,
     RETIRED_UPDATE_UNIQUE_ID,

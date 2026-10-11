@@ -13,8 +13,8 @@ from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .fake_http import FakeResponse, FakeSession, patch_sessions
-
+from .fake_http_wiring import patch_sessions
+from .fake_http import FakeResponse, FakeSession
 from custom_components.dashie.registry_compat import all_devices
 from custom_components.dashie.ble_scanner import _parse_advert, scanner_source
 from custom_components.dashie.ble_webhook import CMD_SET_WEBHOOK, CONF_BLE_WEBHOOK_ID, webhook_hash

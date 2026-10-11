@@ -17,8 +17,8 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .fake_http import FakeResponse, FakeSession, patch_sessions
-
+from .fake_http_wiring import patch_sessions
+from .fake_http import FakeResponse, FakeSession
 DOMAIN = "dashie"
 HOSTS = {"a": "192.168.23.10", "b": "192.168.23.11"}
 
