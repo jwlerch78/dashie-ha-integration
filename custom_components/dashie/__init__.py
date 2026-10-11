@@ -10,6 +10,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import CoreState, HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -902,19 +903,35 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             _LOGGER.warning("set_config: unknown keys ignored: %s", unhandled)
 
         # Apply music token updates
+        #
+        # Both failure paths below used to be log lines, so `set_config` reported success and did
+        # nothing. That matters because an `ma_url`-only call is the ONE workaround we hand a
+        # household whose stored MA address went stale (D-242): a silently-dropped repair looks to
+        # the user like one more thing that didn't work. These now raise, for the reason
+        # commands.py gives for DashieCommandError — HomeAssistantError surfaces in the frontend
+        # and stops an automation step, instead of being swallowed.
         if music_updates:
             store: MusicTokenStore | None = hass.data.get(DOMAIN, {}).get("music_token_store")
             if store is None:
-                _LOGGER.error("set_config: MusicTokenStore not initialized")
-            else:
-                existing = store.get_token()
-                token = music_updates.get("ma_token", existing.get("token", ""))
-                ma_url = music_updates.get("ma_url", existing.get("ma_url", ""))
-                if token:
-                    await store.async_save_token(token, ma_url)
-                    _LOGGER.info("set_config: updated music token (url=%s)", ma_url)
-                else:
-                    _LOGGER.warning("set_config: ma_token is empty, skipping")
+                raise HomeAssistantError(
+                    "Dashie's music token store is not initialised, so nothing was saved. "
+                    "Reload the Dashie integration and try again."
+                )
+            existing = store.get_token()
+            token = music_updates.get("ma_token", existing.get("token", ""))
+            ma_url = music_updates.get("ma_url", existing.get("ma_url", ""))
+            if not token:
+                # get_token() returns {} when no token is held, so an ma_url written alongside an
+                # empty token would be stored and then never served — invisible, not merely
+                # useless. Say what to do instead of inventing a half-supported state.
+                raise HomeAssistantError(
+                    "Cannot set ma_url: no Music Assistant token is stored centrally yet, and the "
+                    "URL is only served alongside a token. Sign in to Music Assistant on a Dashie "
+                    "device once (that publishes the token), then set ma_url — or pass ma_token "
+                    "together with ma_url to do both at once."
+                )
+            await store.async_save_token(token, ma_url)
+            _LOGGER.info("set_config: updated music token (url=%s)", ma_url)
 
         # Apply immich token updates
         if immich_updates:
