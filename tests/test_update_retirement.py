@@ -33,13 +33,14 @@ tablet's row behind.
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from aioresponses import aioresponses
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from .fake_http import FakeResponse, FakeSession, patch_coordinator_session
 
 from custom_components.dashie import (
     RETIRED_UPDATE_DOMAIN,
@@ -79,19 +80,35 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry, device_id: str) ->
     just `entry` - see the harness note in the module docstring.
     """
     hass.set_state(CoreState.running)
-    with aioresponses() as mock, patch(
+    # The device ANSWERING deviceInfo is a precondition these legs state, and it has
+    # to be real: on HA 2026.9.3 the old aioresponses mock was dead, so they ran
+    # against a FAILED first poll instead. The registry assertions held anyway, so
+    # nothing went red and nothing ever prompted a look.
+    fake = FakeSession({
+        "cmd=deviceInfo": FakeResponse(payload={
+            "deviceID": device_id, "stableDeviceID": device_id, "deviceName": "Kitchen",
+        }),
+        "cmd=getRtspStatus": asyncio.TimeoutError(),
+        "cmd=getRtspConfig": asyncio.TimeoutError(),
+    },
+        # Background traffic these legs do not care about - chiefly the 1s service
+        # timer pushing to devices - is DECLARED unanswered rather than left
+        # unrouted. Stating it beats a silent default, and it matches what the old
+        # mock did by accident: under aioresponses every push failed too.
+        default=asyncio.TimeoutError(),
+    )
+    with patch_coordinator_session(fake), patch(
         "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
         AsyncMock(return_value=True),
     ):
-        mock.get(
-            f"{BASE}/?cmd=deviceInfo&type=json",
-            payload={"deviceID": device_id, "stableDeviceID": device_id, "deviceName": "Kitchen"},
-            repeat=True,
-        )
-        mock.get(f"{BASE}/?cmd=getRtspStatus", exception=asyncio.TimeoutError(), repeat=True)
-        mock.get(f"{BASE}/?cmd=getRtspConfig", exception=asyncio.TimeoutError(), repeat=True)
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+    # The injection must have been USED. Without this, a future breakage silently
+    # returns these legs to passing against a dead instrument.
+    assert any("deviceInfo" in r for r in fake.requests), (
+        "the coordinator never asked for deviceInfo, so the session injection is not "
+        "in effect and these legs are running against a failed poll"
+    )
 
 
 def test_the_retired_unique_id_is_the_shipped_wire_value() -> None:
