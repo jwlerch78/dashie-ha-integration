@@ -1,0 +1,46 @@
+# Test dependencies for dashie-ha-integration.
+#
+# RELEASING.md step 1a's recipe refers to this file. It did not exist until
+# 2026-10-11, so anyone following that step literally got file-not-found — an
+# unfollowable instruction is worse than a missing one, because the next person
+# assumes they mis-read it.
+#
+# ⚠️ THE EXTRAS BELOW ARE NOT OPTIONAL. Home Assistant's per-component
+# requirements are NOT dependencies of the `homeassistant` package, so a venv
+# built from the first two lines alone *imports* fine and then fails in ways that
+# look like product bugs: platform unload throws, config entries land in
+# FAILED_UNLOAD, and you get ~20 teardown "errors" that read as a red suite. That
+# cost real time twice (2026-10-09, 2026-10-11). Pinned from a known-good venv and
+# verified by building a fresh one from this file and running the suite.
+#
+# 🔴 THIS FILE IS THE FLOOR LANE ONLY — HA 2025.1.4, the version hacs.json
+# declares, on Python 3.12. It is what the release gate runs, and a green from it
+# says nothing about current HA.
+#
+# To also test the version users actually run (HA 2026.9.x), you need a SECOND
+# venv on Python >= 3.14 — `0.13.366` will not install on 3.12, so one venv
+# physically cannot host both. There, substitute:
+#     pytest-homeassistant-custom-component==0.13.366
+#     serialx          (replaces pyserial)
+#     aiousbwatcher    (new usb dep)
+#     gazetteer-matcher
+# and expect `aioresponses` to be unusable: it has no release compatible with the
+# aiohttp that 2026.9 pulls. Use tests/fake_http.py instead — see its header.
+
+pytest-homeassistant-custom-component==0.13.205
+
+# Being removed: the last tests still using it are migrating to tests/fake_http.py.
+aioresponses==0.7.9
+
+# HA per-component requirements that the integration's platforms pull in.
+zeroconf==0.136.2
+pyserial==3.5
+bleak==0.22.3
+habluetooth==3.7.0
+dbus-fast==2.24.3
+hassil==2.1.0
+home-assistant-intents==2025.1.1
+inkbird-ble==0.5.8
+mutagen==1.47.0
+ha-ffmpeg==3.2.2
+PyTurboJPEG==1.7.5
