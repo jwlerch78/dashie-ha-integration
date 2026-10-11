@@ -142,8 +142,8 @@ class FakeSession:
         self.closed = True
 
 
-def patch_coordinator_session(fake: FakeSession):
-    """Make every DashieCoordinator hand back `fake` from `_get_session()`.
+def patch_sessions(fake: FakeSession):
+    """Route EVERY way the integration gets an HTTP session to `fake`.
 
     For when the coordinator is built *inside* the code under test (e.g. by
     `async_setup_entry`), so there is no instance to assign `_session` on. Where you

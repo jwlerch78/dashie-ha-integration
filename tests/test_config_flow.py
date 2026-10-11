@@ -8,16 +8,19 @@ These reproduce the real field failures we hit in June 2026:
 * Re-adding an already-configured device must abort ``already_configured`` —
   NOT be mislabeled ``cannot_connect``.
 
-``_fetch_device_info`` creates its own ``aiohttp.ClientSession``, so we mock at
-the aiohttp layer with ``aioresponses`` (HA's ``aioclient_mock`` only covers the
-shared session).
+The flow's ``_fetch_device_info`` takes HA's SHARED session
+(``config_flow.py:348``), unlike the coordinator's, which builds its own
+(``coordinator.py:84``). Both are routed by ``tests/fake_http.patch_sessions``,
+which patches the shared-session name **in each module that imported it** as well
+as the coordinator's accessor - patching only where the helper is defined leaves a
+real session in place. (Was ``aioresponses``, which has no release compatible with
+the aiohttp HA 2026.9 pulls; see ``tests/fake_http.py``.)
 """
 import asyncio
 import logging
 from ipaddress import ip_address
 from unittest.mock import patch
 
-from aioresponses import aioresponses
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -28,6 +31,8 @@ except ImportError:  # older HA (e.g. 2025.1 in the local test harness)
     from homeassistant.components.zeroconf import ZeroconfServiceInfo
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from .fake_http import FakeResponse, FakeSession, patch_sessions
 
 DOMAIN = "dashie"
 DEVICE_ID = "a83e167a70e648255f71a1744d25f740"
@@ -69,8 +74,8 @@ async def test_zeroconf_prefers_ipv4_over_ipv6(hass: HomeAssistant) -> None:
     ``.host``, the request would have no match and the flow would abort
     ``cannot_connect`` (the exact bug this guards against).
     """
-    with aioresponses() as mock:
-        mock.get(DEVICE_URL, payload=DEVICE_INFO_JSON)
+    fake = FakeSession({"cmd=deviceInfo": FakeResponse(payload=DEVICE_INFO_JSON)})
+    with patch_sessions(fake):
         result = await hass.config_entries.flow.async_init(
             DOMAIN,
             context={"source": config_entries.SOURCE_ZEROCONF},
@@ -79,8 +84,9 @@ async def test_zeroconf_prefers_ipv4_over_ipv6(hass: HomeAssistant) -> None:
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "confirm"
-    # Prove the IPv4 address (not an IPv6) was the one contacted.
-    assert any(IPV4 in str(url) for (_method, url) in mock.requests)
+    # Prove the IPv4 address (not an IPv6) was the one contacted. This is also the
+    # injection check for this file: an empty list means nothing reached the fake.
+    assert any(IPV4 in r for r in fake.requests), fake.requests
 
     # Finish the flow (stub entry setup so it doesn't touch a real socket) so no
     # discovery flow lingers into teardown, and confirm the IPv4 host is stored.
@@ -95,8 +101,9 @@ async def test_user_flow_normalizes_http_scheme(hass: HomeAssistant) -> None:
     init = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
-    with aioresponses() as mock:
-        mock.get(DEVICE_URL, payload=DEVICE_INFO_JSON)
+    with patch_sessions(FakeSession({
+        "cmd=deviceInfo": FakeResponse(payload=DEVICE_INFO_JSON),
+    })):
         result = await hass.config_entries.flow.async_configure(
             init["flow_id"], {"host": f"http://{IPV4}/", "port": 2323}
         )
@@ -118,8 +125,9 @@ async def test_user_flow_already_configured_not_cannot_connect(
     init = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
-    with aioresponses() as mock:
-        mock.get(DEVICE_URL, payload=DEVICE_INFO_JSON)
+    with patch_sessions(FakeSession({
+        "cmd=deviceInfo": FakeResponse(payload=DEVICE_INFO_JSON),
+    })):
         result = await hass.config_entries.flow.async_configure(
             init["flow_id"], {"host": IPV4, "port": 2323}
         )
@@ -137,8 +145,9 @@ async def test_a_timeout_is_logged_with_what_went_wrong(hass: HomeAssistant, cap
     "cannot connect". The type has to be in the line.
     """
     with caplog.at_level(logging.ERROR, logger="custom_components.dashie.config_flow"):
-        with aioresponses() as mock:
-            mock.get(DEVICE_URL, exception=asyncio.TimeoutError(), repeat=True)
+        with patch_sessions(FakeSession({
+            "cmd=deviceInfo": asyncio.TimeoutError(),
+        })):
             result = await hass.config_entries.flow.async_init(
                 DOMAIN,
                 context={"source": config_entries.SOURCE_ZEROCONF},

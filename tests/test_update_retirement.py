@@ -40,7 +40,7 @@ from homeassistant.helpers import entity_registry as er
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .fake_http import FakeResponse, FakeSession, patch_coordinator_session
+from .fake_http import FakeResponse, FakeSession, patch_sessions
 
 from custom_components.dashie import (
     RETIRED_UPDATE_DOMAIN,
@@ -97,7 +97,7 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry, device_id: str) ->
         # mock did by accident: under aioresponses every push failed too.
         default=asyncio.TimeoutError(),
     )
-    with patch_coordinator_session(fake), patch(
+    with patch_sessions(fake), patch(
         "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
         AsyncMock(return_value=True),
     ):

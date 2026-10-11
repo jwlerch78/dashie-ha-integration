@@ -9,10 +9,11 @@ an entry added while HA is running.
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from aioresponses import aioresponses
 from homeassistant.core import CoreState, HomeAssistant
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from .fake_http import FakeResponse, FakeSession, patch_sessions
 
 DOMAIN = "dashie"
 DEVICE_ID = "a83e167a70e648255f71a1744d25f740"
@@ -35,17 +36,20 @@ async def test_fresh_add_survives_failed_first_poll(hass: HomeAssistant) -> None
     )
     entry.add_to_hass(hass)
 
-    with aioresponses() as mock, patch(
+    # Device unreachable on the first setup poll(s). Declared per route rather than
+    # via a default, so the three the coordinator actually asks for are visible here.
+    unreachable = FakeSession({
+        "cmd=deviceInfo": asyncio.TimeoutError(),
+        "cmd=getRtspStatus": asyncio.TimeoutError(),
+        "cmd=getRtspConfig": asyncio.TimeoutError(),
+    }, default=asyncio.TimeoutError())
+    with patch_sessions(unreachable), patch(
         "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
         AsyncMock(return_value=True),
     ):
-        # Device unreachable on the first setup poll(s).
-        mock.get(f"{BASE}/?cmd=deviceInfo&type=json", exception=asyncio.TimeoutError(), repeat=True)
-        mock.get(f"{BASE}/?cmd=getRtspStatus", exception=asyncio.TimeoutError(), repeat=True)
-        mock.get(f"{BASE}/?cmd=getRtspConfig", exception=asyncio.TimeoutError(), repeat=True)
-
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+    assert unreachable.requests, "the injection was not in effect - no request reached the fake"
 
     # The entry must NOT have been ghost-removed.
     remaining = {e.entry_id for e in hass.config_entries.async_entries(DOMAIN)}
@@ -63,25 +67,32 @@ async def test_entities_recover_after_failed_first_poll(hass: HomeAssistant) -> 
     )
     entry.add_to_hass(hass)
 
-    with aioresponses() as mock, patch(
+    unreachable = FakeSession({"cmd=deviceInfo": asyncio.TimeoutError()},
+                              default=asyncio.TimeoutError())
+    with patch_sessions(unreachable), patch(
         "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
         AsyncMock(return_value=True),
     ):
-        mock.get(f"{BASE}/?cmd=deviceInfo&type=json", exception=asyncio.TimeoutError(), repeat=True)
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert unreachable.requests, "the injection was not in effect for the failing poll"
     assert coordinator.last_update_success is False  # entities would be unavailable
 
-    # Device comes back online → next poll succeeds → entities populate.
-    with aioresponses() as mock:
-        mock.get(
-            f"{BASE}/?cmd=deviceInfo&type=json",
-            payload={"deviceID": DEVICE_ID, "stableDeviceID": DEVICE_ID, "deviceName": "Echo"},
-            repeat=True,
-        )
-        await coordinator.async_refresh()
+    # Device comes back online → next poll succeeds → entities populate. Assigning
+    # _session directly is enough here: we hold the instance, and _get_session returns
+    # whatever is already there. Prefer that over patching when the object is in hand.
+    answering = FakeSession({
+        "cmd=deviceInfo": FakeResponse(payload={
+            "deviceID": DEVICE_ID, "stableDeviceID": DEVICE_ID, "deviceName": "Echo",
+        }),
+    }, default=asyncio.TimeoutError())
+    coordinator._session = answering
+    await coordinator.async_refresh()
+    assert any("deviceInfo" in r for r in answering.requests), (
+        "the recovered poll never reached the fake"
+    )
 
     assert coordinator.last_update_success is True
     assert coordinator.data["deviceID"] == DEVICE_ID
