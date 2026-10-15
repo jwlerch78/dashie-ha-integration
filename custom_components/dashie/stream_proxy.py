@@ -25,6 +25,7 @@ import os
 import re
 import shutil
 import time
+from typing import NamedTuple
 
 from aiohttp import web
 
@@ -229,8 +230,8 @@ class DashieMjpegStreamView(HomeAssistantView):
             )
 
             try:
-                client_gone = await _pipe_frames_to_response(process, response, fps, entity_id)
-                if client_gone:
+                pipe = await _pipe_frames_to_response(process, response, fps, entity_id)
+                if pipe.client_gone:
                     _LOGGER.debug("Client disconnected from MJPEG stream: %s", entity_id)
                     break
 
@@ -238,11 +239,32 @@ class DashieMjpegStreamView(HomeAssistantView):
                 stderr_file.seek(0)
                 stderr_data = stderr_file.read()
                 stderr_text = _redact_url(stderr_data.decode(errors="replace"))
-                # Log last 2000 chars to see actual errors, not just SEI noise
+
+                if pipe.frames == 0:
+                    # Nothing ever reached the client. That is a startup
+                    # refusal — a rejected argument, a missing codec, an
+                    # unreachable source — not a dropped stream. Every retry
+                    # would run the identical command and fail identically, so
+                    # retrying only delays giving up. This MUST be loud: the
+                    # client already holds a 200 with headers, so a silent
+                    # failure here is a camera that never loads with nothing
+                    # in the log to say why.
+                    _LOGGER.error(
+                        "DROP: dashie mjpeg — FFmpeg produced no frames for %s "
+                        "(code=%s), not retrying. stderr: %s",
+                        entity_id,
+                        process.returncode,
+                        stderr_text[-2000:],
+                    )
+                    break
+
+                # Frames did flow, so the stream died partway: transient, and
+                # reconnecting is exactly what the loop is for.
                 _LOGGER.debug(
-                    "FFmpeg exited for %s (code=%s, stderr=%d bytes): %s",
+                    "FFmpeg exited for %s (code=%s, frames=%d, stderr=%d bytes): %s",
                     entity_id,
                     process.returncode,
+                    pipe.frames,
                     len(stderr_data),
                     stderr_text[-2000:],
                 )
@@ -467,9 +489,17 @@ def _build_ffmpeg_cmd(
         "-analyzeduration", "500000",
         "-probesize", "500000",
         "-i", stream_source,
-        # Strip SEI NAL units (type 6). Consumer cameras (Tapo) embed
-        # proprietary SEI (type 764) that can cause decoder warnings.
-        "-bsf:v", "filter_units=remove_types=6",
+        # NO -bsf:v BELONGS HERE. A `filter_units=remove_types=6` sat at this
+        # spot from v1.4.0 (2026-04-07) until 2026-10-14, meaning to strip the
+        # proprietary SEI NAL units (type 764) that consumer cameras embed.
+        # It never once did so: placed AFTER -i it bound to the MJPEG *output*,
+        # and filter_units has never supported mjpeg, so FFmpeg 6/7/8/9 all
+        # refused the entire command (exit 234) and the camera silently never
+        # loaded. A no-op wherever it was tolerated; fatal wherever it was not.
+        #
+        # Do NOT "restore" it. The vendor-SEI concern is real but is already
+        # covered by `-err_detect ignore_err` above, and an input-side -bsf:v
+        # is itself rejected outright by FFmpeg 6 — so moving it is not a fix.
     ])
 
     # Video filters: scale + setpts for monotonic timestamps.
@@ -540,12 +570,24 @@ async def _write_and_drain(response: web.StreamResponse, data: bytes) -> None:
     await response.drain()
 
 
+class PipeResult(NamedTuple):
+    """Outcome of one FFmpeg run: did the client leave, and did anything reach it.
+
+    `frames` exists because the reconnect loop previously could not tell
+    "FFmpeg never started" from "the stream stopped". Both arrived as False,
+    so a deterministic argument rejection was retried 10 times at debug level.
+    """
+
+    client_gone: bool
+    frames: int
+
+
 async def _pipe_frames_to_response(
     process: asyncio.subprocess.Process,
     response: web.StreamResponse,
     fps: int = DEFAULT_FPS,
     entity_id: str = "unknown",
-) -> bool:
+) -> PipeResult:
     """Read JPEG frames from FFmpeg, buffer, and deliver at steady rate.
 
     FFmpeg decodes at network rate (bursty). Python-side jitter buffer
@@ -556,7 +598,10 @@ async def _pipe_frames_to_response(
     write buffer exceeds 64KB (a single MJPEG frame), causing timer jitter.
     TCP flow control handles backpressure instead.
 
-    Returns True if client disconnected, False if FFmpeg exited.
+    Returns a PipeResult: whether the client disconnected, and how many
+    frames actually reached it. The frame count is what separates a
+    deterministic FFmpeg startup failure (zero frames — a retry runs the
+    same command) from a stream that died partway (worth reconnecting).
     """
     boundary = b"--frame\r\n"
     out_fps = fps if fps > 0 else DEFAULT_FPS
@@ -631,6 +676,9 @@ async def _pipe_frames_to_response(
 
     reader_task = asyncio.ensure_future(_reader())
     client_gone = False
+    # Never reset. stats["out"] is zeroed every log window, so it cannot answer
+    # "did anything ever reach the client" — which is the question the caller has.
+    frames_delivered = 0
 
     try:
         # Peek the first frame out as soon as it arrives — gives the client
@@ -659,6 +707,7 @@ async def _pipe_frames_to_response(
                 await asyncio.wait_for(
                     _write_and_drain(response, peek_frame), timeout=5.0
                 )
+                frames_delivered += 1
                 _LOGGER.debug(
                     "MJPEG [%s]: peek frame sent (%dB, %.0fms after ffmpeg start)",
                     entity_id, len(peek_frame_data),
@@ -667,7 +716,7 @@ async def _pipe_frames_to_response(
             except (asyncio.TimeoutError, ConnectionResetError, ConnectionAbortedError):
                 _LOGGER.debug("MJPEG [%s]: client gone during peek frame", entity_id)
                 client_gone = True
-                return client_gone
+                return PipeResult(client_gone, frames_delivered)
 
         # Pre-fill: wait for enough frames to measure input fps and absorb burst gaps
         while len(frame_buf) < PREFILL_FRAMES and not ffmpeg_done.is_set():
@@ -759,6 +808,7 @@ async def _pipe_frames_to_response(
                     _write_and_drain(response, frame), timeout=10.0
                 )
                 t_after = time.monotonic()
+                frames_delivered += 1
                 write_ms = (t_after - t_before) * 1000
                 if write_ms > 20:  # Log slow writes
                     _LOGGER.debug(
@@ -829,7 +879,7 @@ async def _pipe_frames_to_response(
         except asyncio.CancelledError:
             pass
 
-    return client_gone
+    return PipeResult(client_gone, frames_delivered)
 
 
 async def _grab_single_frame(
