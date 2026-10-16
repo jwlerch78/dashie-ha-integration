@@ -21,6 +21,13 @@ SECRET = "S3cretPw"
     [
         # The documented Reolink / Tapo form.
         f"rtsp://admin:{SECRET}@192.168.1.50:554/h264Preview_01_main",
+        # 🔴 EMAIL USERNAME — two @ signs in the authority. Every Reolink account
+        # is an email, so this is the COMMON case, not an edge one. A pattern that
+        # stops at the first @ redacts the username and prints the password while
+        # looking like it worked. This leaked a real password on 2026-10-16.
+        f"rtsp://someone@gmail.com:{SECRET}@192.168.1.50:554/h264Preview_01_main",
+        f"[in#0/rtsp @ 0x1] rtsp://someone@gmail.com:{SECRET}@10.0.0.5:554/s: refused",
+        f"rtsps://someone@example.invalid:{SECRET}@10.0.0.5:554/s",
         # The query form — this is the leg that FAILS on the pre-2026-10-16
         # implementation, which only ever matched `://...@`.
         f"rtsp://192.168.1.50:554/h264Preview_01_main?user=admin&password={SECRET}",
@@ -36,6 +43,16 @@ SECRET = "S3cretPw"
 )
 def test_the_secret_never_survives(url: str) -> None:
     assert SECRET not in _redact_url(url)
+
+
+def test_an_email_username_does_not_leave_the_password_behind() -> None:
+    """The specific shape that leaked: the host must survive, the password must not."""
+    out = _redact_url(
+        f"rtsp://someone@gmail.com:{SECRET}@192.168.1.50:554/h264Preview_01_main"
+    )
+    assert SECRET not in out
+    assert "gmail.com" not in out, "the credential half must be gone entirely"
+    assert "192.168.1.50:554" in out, "the host is why anyone reads the line"
 
 
 def test_the_host_survives_so_the_log_is_still_diagnosable() -> None:

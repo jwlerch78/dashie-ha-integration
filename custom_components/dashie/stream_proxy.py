@@ -94,8 +94,16 @@ _vaapi_device: str | None = None  # e.g. /dev/dri/renderD128
 # Also note `[^/@\s]+` rather than `[^@]+`: the old pattern let the match run across
 # slashes, so a URL with an @ anywhere in its PATH redacted the host too — hiding the
 # one field a reader needs. It fails toward over-redaction, which is safe but useless.
+# 🔴 `[^/\s]*@` — note it DOES allow `@`, and that is the whole point. The
+# username is very often an EMAIL ADDRESS (every Reolink account is one), so the
+# authority holds TWO @ signs: rtsp://user@gmail.com:pw@host/path. A pattern that
+# stops at the first @ redacts `user` and leaves `gmail.com:pw` in the log — it
+# prints the password while looking like it redacted something. Measured 2026-10-16
+# on John's own Reolink: it leaked an 11-character password to the terminal.
+# Greedy-to-the-last-@ is what makes that shape safe; `[^/\s]` still stops the match
+# at the end of the authority, so an @ in the PATH is left alone.
 _URL_CRED_RE = re.compile(
-    r"(\b(?:rtsp|rtsps|http|https)://)[^/@\s]+@", re.IGNORECASE
+    r"(\b(?:rtsp|rtsps|http|https)://)[^/\s]*@", re.IGNORECASE
 )
 _QUERY_CRED_RE = re.compile(
     r"([?&](?:user(?:name)?|pass(?:word)?|pwd|token|auth)=)[^&\s\"'\]]*",
