@@ -19,15 +19,14 @@ pre-fix `-bsf:v` pair back after `-i`, exactly where it sat.
 Needs the test venv (it imports `homeassistant.components.http`), e.g.
 `~/.cache/dashie-ha-venvs/current/bin/python`.
 
-Modes: (default) the 3 legs · `--race-rate N` · `--sei`.
+Modes: (default) the 3 legs · `--race-rate N`.
+For "does this camera emit SEI?" see live_camera_sei_check.py.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import collections
 import logging
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -39,6 +38,7 @@ from aiohttp import ClientSession, ClientTimeout, web  # noqa: E402
 from custom_components.dashie import stream_proxy as sp  # noqa: E402
 
 _REAL_BUILD = sp._build_ffmpeg_cmd
+_R = sp._redact_url  # every line this tool prints goes through it
 
 
 class _Rec(logging.Handler):
@@ -126,39 +126,79 @@ async def _run_leg(name: str, src: str, *, break_calls: set[int],
     return r
 
 
+async def _leg_until(name: str, src: str, verdicts, *, break_calls: set[int],
+                     want_frames: bool, max_seconds: float, tries: int = 3) -> list:
+    """Re-run a leg until its own verdicts hold, up to `tries` attempts.
+
+    🔴 Why an instrument gets retries. The probe race is a MEASURED 7-12%
+    transient (prove it yourself with --race-rate). A single-shot leg therefore
+    reds about 1 run in 3 — measured 2026-10-16, 1 of 3 consecutive runs — for a
+    reason that has nothing to do with the subject, and that red is
+    INDISTINGUISHABLE from a real regression. An instrument that cries wolf at
+    33% is worse than no instrument, because the next person learns to re-run it
+    until it is green, which is how a real failure gets dismissed.
+    A genuine breakage still fails every attempt, and the attempt count is
+    always printed so a leg that needed 3 is never mistaken for a clean one.
+    """
+    for attempt in range(1, tries + 1):
+        r = await _run_leg(name, src, break_calls=break_calls,
+                           want_frames=want_frames, max_seconds=max_seconds)
+        v = verdicts(r)
+        if all(ok for _, ok in v):
+            print(f"  -> verdicts hold on attempt {attempt}/{tries}")
+            return v
+        if attempt < tries:
+            failed = [lbl for lbl, ok in v if not ok]
+            print(f"  -> attempt {attempt}/{tries} did not hold ({'; '.join(failed)});"
+                  f" retrying — the probe race is a known 7-12% transient")
+    print(f"  -> STILL failing after {tries} attempts: this is not the probe race")
+    return v
+
+
 async def _legs(src: str) -> int:
     print(f"[preflight] module {sp.__file__}")
     print(f"[preflight] ZERO_FRAME_RETRIES={sp.ZERO_FRAME_RETRIES} "
           f"MAX_RECONNECTS={sp.MAX_RECONNECTS} RECONNECT_DELAY={sp.RECONNECT_DELAY}")
     if sp.ZERO_FRAME_RETRIES != 2:
         print("  !! constant moved — re-read its comment before trusting these legs")
-
-    r1 = await _run_leg("L1 shipping argv, live camera (positive control)",
-                        src, break_calls=set(), want_frames=True, max_seconds=25)
-    r2 = await _run_leg("L2 pre-fix argv re-injected (the shipped defect)",
-                        src, break_calls=set(range(1, 12)), want_frames=False,
-                        max_seconds=60)
-    r3 = await _run_leg("L3 transient: attempt 1 sabotaged, then healthy",
-                        src, break_calls={1}, want_frames=True, max_seconds=40)
-
     want = sp.ZERO_FRAME_RETRIES + 1
-    v = [
-        ("L1 live camera delivers frames on the shipping argv", r1["frames_ok"]),
-        ("L1 logs no DROP", not r1["drops"]),
-        ("L2 delivers zero frames", r2["frames_ok"]),
-        (f"L2 attempts exactly {want} (1 + ZERO_FRAME_RETRIES)", r2["calls"] == want),
-        ("L2 is loud on the FIRST failure", r2["first_loud"] == 1),
-        ("L2 gives up loudly, exactly once", r2["gave_up"] == 1),
-        ("L2 stderr tail names the real cause (exit 234)",
-         any("234" in d for d in r2["drops"])),
-        ("L3 RECOVERS: frames reach the client", r3["frames_ok"]),
-        ("L3 retried rather than giving up", r3["calls"] > 1 and r3["gave_up"] == 0),
-        ("L3 was still loud about the first failure", r3["first_loud"] == 1),
-    ]
+
+    all_v = []
+    all_v += await _leg_until(
+        "L1 shipping argv, live camera (positive control)", src,
+        lambda r: [
+            ("L1 live camera delivers frames on the shipping argv", r["frames_ok"]),
+            ("L1 needed no retry (no DROP)", not r["drops"]),
+        ],
+        break_calls=set(), want_frames=True, max_seconds=25)
+
+    # L2 is DETERMINISTIC — the argument is rejected every time — so it gets one
+    # attempt. If this ever needs a retry, something has changed, not raced.
+    all_v += await _leg_until(
+        "L2 pre-fix argv re-injected (the shipped defect)", src,
+        lambda r: [
+            ("L2 delivers zero frames", r["frames_ok"]),
+            (f"L2 attempts exactly {want} (1 + ZERO_FRAME_RETRIES)", r["calls"] == want),
+            ("L2 is loud on the FIRST failure", r["first_loud"] == 1),
+            ("L2 gives up loudly, exactly once", r["gave_up"] == 1),
+            ("L2 stderr tail names the real cause (exit 234)",
+             any("234" in d for d in r["drops"])),
+        ],
+        break_calls=set(range(1, 12)), want_frames=False, max_seconds=60, tries=1)
+
+    all_v += await _leg_until(
+        "L3 transient: attempt 1 sabotaged, then healthy", src,
+        lambda r: [
+            ("L3 RECOVERS: frames reach the client", r["frames_ok"]),
+            ("L3 retried rather than giving up", r["calls"] > 1 and r["gave_up"] == 0),
+            ("L3 was still loud about the first failure", r["first_loud"] == 1),
+        ],
+        break_calls={1}, want_frames=True, max_seconds=40)
+
     print("\n" + "=" * 62)
-    for label, ok in v:
+    for label, ok in all_v:
         print(f"  {'PASS' if ok else 'FAIL'}  {label}")
-    allok = all(ok for _, ok in v)
+    allok = all(ok for _, ok in all_v)
     print("=" * 62)
     print("ALL PASS" if allok else "SOME FAILED")
     return 0 if allok else 1
@@ -192,7 +232,7 @@ async def _race_rate(src: str, n: int) -> int:
             await p.wait()
         if frames == 0:
             zero += 1
-        first = next((l for l in err.splitlines() if l.strip()), "")
+        first = _R(next((l for l in err.splitlines() if l.strip()), ""))
         print(f"  run {i:2d}: {'OK  ' if frames else 'ZERO'} frames={frames} "
               f"rc={p.returncode} {first[:120] if not frames else ''}")
         await asyncio.sleep(0.5)
@@ -203,64 +243,34 @@ async def _race_rate(src: str, n: int) -> int:
     return 0
 
 
-def _sei(src: str, seconds: int) -> int:
-    """Does this camera emit SEI (NAL type 6)? The question the deleted -bsf:v was for.
-
-    Uses FFmpeg's own bitstream parser, and a positive control that MUST show SEI —
-    a zero from a detector never shown able to report non-zero means nothing.
-    """
-    def histogram(path: str) -> collections.Counter:
-        pr = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "trace", "-i", path,
-             "-c:v", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"],
-            capture_output=True, text=True, errors="replace")
-        c: collections.Counter = collections.Counter()
-        for line in pr.stderr.splitlines():
-            if "trace_headers" in line and "nal_unit_type: " in line:
-                tail = line.split("nal_unit_type: ", 1)[1]
-                c[tail.split("(")[0].strip()] += 1
-        return c
-
-    import tempfile
-    with tempfile.TemporaryDirectory() as td:
-        cam, ctrl = f"{td}/cam.h264", f"{td}/ctrl.h264"
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error",
-                        "-rtsp_transport", "tcp", "-i", src, "-t", str(seconds),
-                        "-an", "-c:v", "copy", "-f", "h264", cam, "-y"], check=True)
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-                        "-i", "testsrc=size=320x240:rate=5", "-t", "1",
-                        "-c:v", "libx264", "-f", "h264", ctrl, "-y"], check=True)
-        cam_h, ctrl_h = histogram(cam), histogram(ctrl)
-
-    print(f"camera NAL histogram ({seconds}s): {dict(cam_h)}")
-    print(f"control NAL histogram:            {dict(ctrl_h)}")
-    if ctrl_h.get("6", 0) == 0:
-        print("\nCONTROL FAILED: the detector did not report SEI on a stream that has "
-              "it. The camera reading below is a NON-ANSWER.")
-        return 1
-    print(f"\ncontrol sees SEI: {ctrl_h['6']} => the detector can report non-zero")
-    n = cam_h.get("6", 0)
-    print(f"camera SEI (NAL type 6): {n}")
-    print("=> this camera CANNOT answer the SEI question" if n == 0
-          else "=> this camera DOES emit SEI; it can answer the question")
-    return 0
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", required=True, help="rtsp:// URL of a live camera")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--source-file", metavar="PATH",
+                     help="file whose first line is the rtsp:// URL. USE THIS for any "
+                          "camera with credentials in the URL (Reolink, Dahua): argv is "
+                          "world-readable via ps, a file can be chmod 600")
+    src.add_argument("--source", help="rtsp:// URL, for a camera with NO credentials")
     ap.add_argument("--race-rate", type=int, metavar="N",
                     help="instead of the legs, run the shipping argv N times")
-    ap.add_argument("--sei", action="store_true",
-                    help="instead of the legs, count SEI NAL units on the camera")
-    ap.add_argument("--sei-seconds", type=int, default=12)
     a = ap.parse_args()
+    if a.source_file:
+        pth = Path(a.source_file)
+        mode = pth.stat().st_mode & 0o777
+        if mode & 0o077:
+            print(f"refusing: {a.source_file} is mode {mode:o}, readable by others.\n"
+                  f"  chmod 600 {a.source_file}")
+            return 2
+        a.source = pth.read_text().strip().splitlines()[0].strip()
+    else:
+        print("note: --source puts the URL in argv, which `ps` shows to any local "
+              "process. Use --source-file for a camera whose URL carries credentials.")
     if not a.source.startswith("rtsp://"):
-        print("--source must be rtsp:// (what _is_allowed_source permits)")
+        print("source must be rtsp:// (what _is_allowed_source permits)")
         return 2
-    if a.sei:
-        return _sei(a.source, a.sei_seconds)
+    # From here on the URL is never printed: only _R()'d text reaches stdout.
+    print(f"source: {_R(a.source)}")
     if a.race_rate:
         return asyncio.run(_race_rate(a.source, a.race_rate))
     return asyncio.run(_legs(a.source))
