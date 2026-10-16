@@ -45,6 +45,25 @@ DEFAULT_QUALITY = 8   # MJPEG quality: 2 = best, 31 = worst
 MAX_FPS = 30
 MAX_RECONNECTS = 10
 RECONNECT_DELAY = 2.0  # Seconds between reconnect attempts
+# How many times a run that delivered ZERO frames may be retried.
+#
+# 🔴 This bound exists because the failure signature is AMBIGUOUS, and KNOWN to be
+# ambiguous — measured 2026-10-16 against a real RTSP source, not reasoned:
+#   * a rejected argument is DETERMINISTIC. Retrying runs the identical command and
+#     fails identically, so 10 attempts only delay giving up (that was the -bsf:v
+#     defect: exit 234, zero frames, every time).
+#   * a lost probe race is TRANSIENT. The shipped argv's 500 ms analyzeduration lost
+#     once in ~7 runs against a tablet RTSP server — "Could not find codec parameters
+#     … unspecified size" → no output stream → ALSO exit 234 with zero frames, and
+#     5/5 consecutive runs afterwards succeeded.
+# ⇒ the two are INDISTINGUISHABLE from the exit code and the frame count.
+# ⚠️ And stderr cannot separate them either: that same "Could not find codec
+# parameters" line appeared in a run that SUCCEEDED with 10 frames, so a classifier
+# keyed on it would misfire in both directions.
+# ⇒ a small bound is the right answer rather than a cleverer classifier: 0 retries
+# gives up on a flaky camera, 10 is the silent storm this replaced. Do not "simplify"
+# this to either extreme without re-measuring both arms.
+ZERO_FRAME_RETRIES = 2
 READ_CHUNK_SIZE = 65536  # 64KB reads from FFmpeg stdout
 FRAME_BUFFER_SIZE = 60   # Buffer for ~3s at 20fps (absorbs burst gaps)
 PREFILL_FRAMES = 10      # Wait for this many frames before first send (~500ms at 20fps)
@@ -196,6 +215,7 @@ class DashieMjpegStreamView(HomeAssistantView):
 
         # Stream with automatic reconnect
         reconnects = 0
+        zero_frame_exits = 0
         while reconnects <= MAX_RECONNECTS:
             # Re-resolve stream source on reconnect (URLs can expire)
             if reconnects > 0:
@@ -241,22 +261,39 @@ class DashieMjpegStreamView(HomeAssistantView):
                 stderr_text = _redact_url(stderr_data.decode(errors="replace"))
 
                 if pipe.frames == 0:
-                    # Nothing ever reached the client. That is a startup
-                    # refusal — a rejected argument, a missing codec, an
-                    # unreachable source — not a dropped stream. Every retry
-                    # would run the identical command and fail identically, so
-                    # retrying only delays giving up. This MUST be loud: the
-                    # client already holds a 200 with headers, so a silent
-                    # failure here is a camera that never loads with nothing
-                    # in the log to say why.
-                    _LOGGER.error(
-                        "DROP: dashie mjpeg — FFmpeg produced no frames for %s "
-                        "(code=%s), not retrying. stderr: %s",
-                        entity_id,
-                        process.returncode,
-                        stderr_text[-2000:],
-                    )
-                    break
+                    # Nothing ever reached the client: a startup failure, not a
+                    # dropped stream. It MUST be loud — the client already holds a
+                    # 200 with headers, so silence here is a camera that never loads
+                    # with nothing in the log to say why.
+                    #
+                    # Loud on the FIRST occurrence (with the stderr tail, which is
+                    # what names the cause), then a small bounded retry because the
+                    # signature cannot distinguish a deterministic rejection from a
+                    # transient probe race — see ZERO_FRAME_RETRIES for the
+                    # measurements behind that.
+                    zero_frame_exits += 1
+                    if zero_frame_exits == 1:
+                        _LOGGER.error(
+                            "DROP: dashie mjpeg — FFmpeg produced no frames for %s "
+                            "(code=%s), retrying up to %d more time(s). stderr: %s",
+                            entity_id,
+                            process.returncode,
+                            ZERO_FRAME_RETRIES,
+                            stderr_text[-2000:],
+                        )
+                    if zero_frame_exits > ZERO_FRAME_RETRIES:
+                        _LOGGER.error(
+                            "DROP: dashie mjpeg — %s produced no frames in %d "
+                            "attempt(s), giving up (code=%s)",
+                            entity_id,
+                            zero_frame_exits,
+                            process.returncode,
+                        )
+                        break
+                    # Reuse the normal reconnect path: it waits RECONNECT_DELAY and
+                    # re-resolves the stream source, which a transient failure wants.
+                    reconnects += 1
+                    continue
 
                 # Frames did flow, so the stream died partway: transient, and
                 # reconnecting is exactly what the loop is for.

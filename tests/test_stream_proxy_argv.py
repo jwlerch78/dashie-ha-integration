@@ -140,15 +140,51 @@ async def _drive_loop(monkeypatch, pipe_results):
 
 
 @pytest.mark.asyncio
-async def test_zero_frames_is_loud_and_does_not_retry(monkeypatch, caplog):
-    """L4 — a run that delivered nothing must log ERROR with DROP: and stop."""
-    caplog.set_level("DEBUG", logger=stream_proxy._LOGGER.name)
-    spawns = await _drive_loop(monkeypatch, [PipeResult(False, 0)])
+async def test_zero_frames_is_loud_and_retries_a_BOUNDED_number_of_times(monkeypatch, caplog):
+    """L4 — loud on the first occurrence, then bounded, then stops.
 
-    assert len(spawns) == 1, f"retried a deterministic failure {len(spawns)} times"
+    ⚠️ This leg previously asserted ZERO retries, on the reasoning that an argument
+    rejection is deterministic so retrying cannot help. **The real-camera test on
+    2026-10-16 refuted that**: the shipped argv's 500 ms probe window lost once in
+    ~7 runs against a live RTSP source and produced the SAME signature — exit 234,
+    zero frames — and 5/5 runs afterwards succeeded. So "zero frames" covers a
+    deterministic rejection AND a transient probe race, and nothing in the exit code
+    or stderr separates them (the probe message also appeared in a run that
+    succeeded with 10 frames). Hence a bound rather than a classifier.
+    """
+    caplog.set_level("DEBUG", logger=stream_proxy._LOGGER.name)
+    spawns = await _drive_loop(
+        monkeypatch, [PipeResult(False, 0)] * (stream_proxy.ZERO_FRAME_RETRIES + 2)
+    )
+
+    # 1 initial attempt + ZERO_FRAME_RETRIES, then it gives up. Never the 10 the
+    # old reconnect budget allowed, and never just 1.
+    assert len(spawns) == stream_proxy.ZERO_FRAME_RETRIES + 1, len(spawns)
+
     errors = [r for r in caplog.records if r.levelname == "ERROR" and "DROP:" in r.getMessage()]
-    assert len(errors) == 1, [r.getMessage() for r in caplog.records]
-    assert "no frames" in errors[0].getMessage()
+    assert len(errors) == 2, [r.getMessage() for r in errors]
+    assert "no frames" in errors[0].getMessage()          # loud immediately
+    assert "stderr" in errors[0].getMessage()             # with the cause attached
+    assert "giving up" in errors[1].getMessage()          # and loud when it stops
+
+
+@pytest.mark.asyncio
+async def test_a_transient_zero_frame_failure_can_RECOVER(monkeypatch, caplog):
+    """The leg that makes the bound worth having, rather than merely bounded.
+
+    Zero frames once, then frames. With the old no-retry rule this camera stayed
+    dead until the client re-requested; with a 10-deep silent budget nobody learned
+    it had happened. Both must be false: it retries, it recovers, and it still said
+    so out loud.
+    """
+    caplog.set_level("DEBUG", logger=stream_proxy._LOGGER.name)
+    spawns = await _drive_loop(
+        monkeypatch, [PipeResult(False, 0), PipeResult(False, 9), PipeResult(True, 3)]
+    )
+    assert len(spawns) == 3, "a transient zero-frame failure was not retried"
+    errors = [r for r in caplog.records if r.levelname == "ERROR" and "DROP:" in r.getMessage()]
+    assert len(errors) == 1, "recovery must not be silent, nor log a give-up"
+    assert "giving up" not in errors[0].getMessage()
 
 
 @pytest.mark.asyncio
