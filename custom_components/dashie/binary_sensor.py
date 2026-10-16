@@ -29,6 +29,7 @@ async def async_setup_entry(
         DashieScreensaverSensor(coordinator, device_id),
         DashiePinSetSensor(coordinator, device_id),
         DashieDeviceAdminSensor(coordinator, device_id),
+        DashieDeviceOwnerSensor(coordinator, device_id),
         DashieMotionSensor(coordinator, device_id),
         DashieFaceSensor(coordinator, device_id),
     ]
@@ -157,6 +158,40 @@ class DashieDeviceAdminSensor(DashieEntity, BinarySensorEntity):
             "how_to_enable": "In Dashie settings, set screensaver mode to 'Screen Off' "
                              "and grant the permission when prompted.",
         }
+
+
+class DashieDeviceOwnerSensor(DashieEntity, BinarySensorEntity):
+    """Device Owner binary sensor.
+
+    Device Owner is a strictly stronger provisioning state than Device Admin
+    (which `DashieDeviceAdminSensor` reports) and the two are independent, so
+    neither answers the other. Device Owner is what lets the camera foreground
+    service claim FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED and so survive
+    Android 14+/OEM background-camera restrictions after `lockNow()` backgrounds
+    the app — see DashieApiService.kt:385, where the device makes exactly that
+    decision from this flag.
+
+    It is diagnostic because it cannot be changed from here: Device Owner is set
+    at provisioning time (factory install / ADB on an un-provisioned device) and
+    an app cannot grant it to itself. The value is reported by the device, so
+    treat it as STATE — read it, do not try to reconcile it.
+    """
+
+    _attr_translation_key = "device_owner"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_device_owner"
+        self._attr_name = "Device Owner"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if Dashie is the Device Owner app."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("isDeviceOwner", False)
+        return None
 
 
 class DashieMotionSensor(DashieEntity, BinarySensorEntity):

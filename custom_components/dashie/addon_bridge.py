@@ -81,8 +81,21 @@ _BRIDGE_HEADER_HA = "x-dashie-voice-bridge-secret"
 # add-on defaults to observe mode — a silent drop, which is worse than the HA edition's
 # loud one. `dashie*` covers every present and future channel of both products without
 # naming any of them, and is narrow enough not to read a sibling add-on's secret.
+# 🔴 `*dashie*`, not `dashie*`. HA names addon_configs/<dir> after the add-on's FULL
+# slug, and almost no real install leaves that starting with "dashie":
+#   repo install   62f754e2_dashie_ha      (repo-hash prefix)
+#   local install  local_dashie
+#   official       core_dashie
+# A `dashie*` prefix matched ONLY a bare `dashie` directory, which HA essentially
+# never creates — measured 2026-10-16: 1 of 6 realistic slug forms, and the 1 was
+# the unrealistic one. So for the family Console, whose addon_config mount is the
+# ONLY channel, the secret was effectively never findable: bridge auth could not be
+# enforced, and flipping `bridge_auth_enforce` would have 401'd every call.
+# This is the SAME defect `_is_dashie_addon` was fixed for on 2026-07-30 ("match on
+# suffix, never equality alone") — the slug matcher was corrected and this glob,
+# four lines away, was not. Pinned by tests/test_bridge_secret_globs.py.
 _BRIDGE_SECRET_GLOBS = (
-    "addon_configs/dashie*/bridge_secret",   # either product, any channel
+    "addon_configs/*dashie*/bridge_secret",  # either product, any channel, any slug prefix
     ".dashie_voice/bridge_secret",           # HA edition's HA-config-dir channel
 )
 _bridge_secret: str | None = None

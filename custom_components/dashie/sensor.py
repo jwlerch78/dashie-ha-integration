@@ -53,6 +53,7 @@ async def async_setup_entry(
         DashieBatterySensor(coordinator, device_id),
         DashieCurrentPageSensor(coordinator, device_id),
         DashieDeviceIdSensor(coordinator, device_id),
+        DashiePackageNameSensor(coordinator, device_id),
         DashieRamUsageSensor(coordinator, device_id),
         DashieStorageSensor(coordinator, device_id),
         DashieWifiSignalSensor(coordinator, device_id),
@@ -65,6 +66,44 @@ async def async_setup_entry(
     ]
 
     async_add_entities(entities)
+
+
+class DashiePackageNameSensor(DashieEntity, SensorEntity):
+    """The Dashie app's own Android package name (e.g. com.dashieapp.Dashie).
+
+    🔴 The wire field is called `foregroundApp` and that name is a LIE. The device
+    sets it to `context.packageName` unconditionally (DeviceInfoHandler.kt:139), so
+    it is a constant naming OUR OWN package — never whatever app is actually in the
+    foreground. It is deliberately surfaced here under a truthful name instead:
+    exposing `foreground_app` would enshrine the wrong meaning in a user-visible
+    entity id, and somebody would eventually build an automation on it believing it
+    tracked the foreground app.
+
+    Useful because the package differs per build flavor (`.staging`, `.local`), so
+    this is how you tell WHICH Dashie build a device is running without ADB — and
+    the version string alone cannot: three builds answered to "1.1.1" on one desk
+    (2026-09-09).
+
+    If the device ever starts reporting the real foreground app, that is a NEW
+    field, not a reinterpretation of this one.
+    """
+
+    _attr_icon = "mdi:package-variant-closed"
+    _attr_translation_key = "package_name"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DashieCoordinator, device_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{device_id}_package_name"
+        self._attr_name = "Package Name"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the app's package name, as reported by the device."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("foregroundApp")
+        return None
 
 
 class DashieBatterySensor(DashieEntity, SensorEntity):
