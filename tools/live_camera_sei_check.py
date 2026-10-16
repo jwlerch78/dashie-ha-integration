@@ -28,9 +28,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from custom_components.dashie.stream_proxy import _redact_url as _R  # noqa: E402
+from _cred_safe import P as _P, read_source  # noqa: E402
 
 
 def check(src: str, seconds: int) -> int:
@@ -61,7 +62,7 @@ def check(src: str, seconds: int) -> int:
              cam, "-y"],
             capture_output=True, text=True, errors="replace", check=False)
         if grab.returncode != 0:
-            print(f"could not pull from the camera: {_R(grab.stderr)[-400:]}")
+            _P("could not pull from the camera:", grab.stderr[-400:])
             return 1
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
                         "-i", "testsrc=size=320x240:rate=5", "-t", "1",
@@ -95,21 +96,9 @@ def main() -> int:
     src.add_argument("--source", help="rtsp:// URL, for a camera with NO credentials")
     ap.add_argument("--seconds", type=int, default=12)
     a = ap.parse_args()
-    if a.source_file:
-        pth = Path(a.source_file)
-        mode = pth.stat().st_mode & 0o777
-        if mode & 0o077:
-            print(f"refusing: {a.source_file} is mode {mode:o}, readable by others.\n"
-                  f"  chmod 600 {a.source_file}")
-            return 2
-        a.source = pth.read_text().strip().splitlines()[0].strip()
-    else:
-        print("note: --source puts the URL in argv, which `ps` shows to any local "
-              "process. Use --source-file for a camera whose URL carries credentials.")
-    if not a.source.startswith("rtsp://"):
-        print("source must be rtsp://")
+    a.source = read_source(a.source_file, a.source)
+    if a.source is None:
         return 2
-    print(f"source: {_R(a.source)}")
     return check(a.source, a.seconds)
 
 

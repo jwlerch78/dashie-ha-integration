@@ -45,6 +45,24 @@ def test_the_secret_never_survives(url: str) -> None:
     assert SECRET not in _redact_url(url)
 
 
+def test_a_url_it_cannot_parse_is_masked_rather_than_passed_through() -> None:
+    """🔴 FAIL SAFE. A URL pasted out of a config arrived with ~40 SPACES inside the
+    authority. The named patterns cannot cross whitespace, so nothing matched and
+    the function returned the string unchanged — a silent fail-OPEN that put a real
+    password on a terminal. An unrecognised shape must be redacted MORE, not less.
+    """
+    weird = f"rtsp://jwlerch     0mail.com:{SECRET}@192.168.86.245:554/stream1"
+    out = _redact_url(weird)
+    assert SECRET not in out
+    assert "192.168.86.245:554/stream1" in out, "the host/path must still survive"
+
+
+@pytest.mark.parametrize("scheme", ["rtsp", "rtsps", "http", "https"])
+def test_fail_safe_covers_every_scheme(scheme: str) -> None:
+    out = _redact_url(f"{scheme}://weird  user:{SECRET}@10.0.0.5:554/s")
+    assert SECRET not in out
+
+
 def test_an_email_username_does_not_leave_the_password_behind() -> None:
     """The specific shape that leaked: the host must survive, the password must not."""
     out = _redact_url(

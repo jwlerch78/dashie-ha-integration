@@ -126,9 +126,55 @@ SNAPSHOT_FFMPEG_TIMEOUT = 5.0
 
 
 def _redact_url(url: str) -> str:
-    """Redact credentials from a stream URL (or a log line containing one)."""
+    r"""Redact credentials from a stream URL (or a log line containing one).
+
+    🔴 This function FAILS SAFE. The two regexes above understand the shapes we
+    know; `_mask_residual_authority` then masks anything that still looks like an
+    embedded credential. That last pass exists because the failure mode of a
+    redactor is asymmetric and I learned it the expensive way — twice, on the same
+    afternoon, against the same real camera:
+
+      1. an EMAIL username put a second @ in the authority, and a first-@ pattern
+         printed the password while looking like it had redacted something;
+      2. a URL pasted out of a config arrived with ~40 SPACES inside the
+         authority. `[^/\s]*@` cannot cross whitespace, so NOTHING matched and the
+         function returned the string unchanged — a silent fail-OPEN. A password
+         reached a terminal because an unparseable URL was treated as a clean one.
+
+    ⇒ "I do not recognise this" must mean redact MORE, never pass it through.
+    The residual pass may over-redact a prose line that merely contains `://` and
+    a later `@` (it masks to the last @ before the first /). That is the correct
+    trade for a credential redactor: the recognised shapes above all keep their
+    host, and an over-redacted log line costs a reader context, while an
+    under-redacted one costs a user their password.
+    """
     out = _URL_CRED_RE.sub(r"\1****:****@", url)
-    return _QUERY_CRED_RE.sub(r"\1****", out)
+    out = _QUERY_CRED_RE.sub(r"\1****", out)
+    return _mask_residual_authority(out)
+
+
+def _mask_residual_authority(text: str) -> str:
+    """Mask any `scheme://...@` the named patterns failed to recognise."""
+    for scheme in ("rtsp://", "rtsps://", "http://", "https://"):
+        start = 0
+        while True:
+            i = text.lower().find(scheme, start)
+            if i < 0:
+                break
+            body = i + len(scheme)
+            end = text.find("/", body)
+            if end < 0:
+                end = len(text)
+            nl = text.find("\n", body)
+            if 0 <= nl < end:
+                end = nl
+            authority = text[body:end]
+            at = authority.rfind("@")
+            if at >= 0 and authority[:at] != "****:****":
+                text = text[:body] + "****:****@" + authority[at + 1:] + text[end:]
+                end = body + len("****:****@") + len(authority) - at - 1
+            start = end if end > i else i + len(scheme)
+    return text
 
 
 class DashieMjpegStreamView(HomeAssistantView):

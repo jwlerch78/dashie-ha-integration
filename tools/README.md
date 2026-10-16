@@ -70,6 +70,15 @@ chmod 600 ~/.cam-url
     tools/live_camera_mjpeg_check.py --source rtsp://cam:8554/
 ```
 
+Both camera tools share **`_cred_safe.py`** — one copy of the credential
+handling, because a safety check that exists twice drifts, and the copy that
+drifts is the one that leaks. It resolves the URL, refuses a file other users can
+read, and prints through `P()`, which **verifies the secret is absent and
+withholds the line if it is not**. The tools can do what `_redact_url` cannot:
+they know their own credential, having just parsed it. That gate exists because a
+redactor bug put a real password on a terminal twice in one afternoon — the second
+time because the check ran *after* the print instead of gating it.
+
 🔴 **`--source-file`, not `--source`, for any camera whose URL carries
 credentials** — argv is world-readable through `ps`. The tool refuses a file that
 is not mode 600, and every line it prints goes through `_redact_url`, so the

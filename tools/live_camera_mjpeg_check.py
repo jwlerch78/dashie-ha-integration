@@ -31,14 +31,16 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from aiohttp import ClientSession, ClientTimeout, web  # noqa: E402
 
 from custom_components.dashie import stream_proxy as sp  # noqa: E402
 
+from _cred_safe import P as _P, read_source  # noqa: E402
+
 _REAL_BUILD = sp._build_ffmpeg_cmd
-_R = sp._redact_url  # every line this tool prints goes through it
 
 
 class _Rec(logging.Handler):
@@ -122,7 +124,7 @@ async def _run_leg(name: str, src: str, *, break_calls: set[int],
     print(f"  DROP records       : {len(drops)} "
           f"(first-loud={r['first_loud']}, gave-up={r['gave_up']})")
     for d in drops:
-        print(f"    | {d[:300]}")
+        _P(f"    | {d[:300]}")
     return r
 
 
@@ -166,9 +168,13 @@ async def _legs(src: str) -> int:
     all_v = []
     all_v += await _leg_until(
         "L1 shipping argv, live camera (positive control)", src,
+        # "no DROP" is deliberately NOT a verdict. At the measured 7-12% probe-race
+        # rate it fails that often BY DESIGN, and a verdict that is expected to fail
+        # is not a verdict — it is noise that trains the reader to ignore reds. The
+        # DROP count is printed above either way; production retrying is correct
+        # behavior, not a defect, so L1 asserts only the outcome that must hold.
         lambda r: [
             ("L1 live camera delivers frames on the shipping argv", r["frames_ok"]),
-            ("L1 needed no retry (no DROP)", not r["drops"]),
         ],
         break_calls=set(), want_frames=True, max_seconds=25)
 
@@ -232,9 +238,9 @@ async def _race_rate(src: str, n: int) -> int:
             await p.wait()
         if frames == 0:
             zero += 1
-        first = _R(next((l for l in err.splitlines() if l.strip()), ""))
-        print(f"  run {i:2d}: {'OK  ' if frames else 'ZERO'} frames={frames} "
-              f"rc={p.returncode} {first[:120] if not frames else ''}")
+        first = next((l for l in err.splitlines() if l.strip()), "")
+        _P(f"  run {i:2d}: {'OK  ' if frames else 'ZERO'} frames={frames} "
+           f"rc={p.returncode} {first[:120] if not frames else ''}")
         await asyncio.sleep(0.5)
     print(f"\nzero-frame runs: {zero}/{n} ({100.0 * zero / n:.0f}%); gives up after "
           f"{sp.ZERO_FRAME_RETRIES + 1} CONSECUTIVE zero-frame runs")
@@ -255,22 +261,9 @@ def main() -> int:
     ap.add_argument("--race-rate", type=int, metavar="N",
                     help="instead of the legs, run the shipping argv N times")
     a = ap.parse_args()
-    if a.source_file:
-        pth = Path(a.source_file)
-        mode = pth.stat().st_mode & 0o777
-        if mode & 0o077:
-            print(f"refusing: {a.source_file} is mode {mode:o}, readable by others.\n"
-                  f"  chmod 600 {a.source_file}")
-            return 2
-        a.source = pth.read_text().strip().splitlines()[0].strip()
-    else:
-        print("note: --source puts the URL in argv, which `ps` shows to any local "
-              "process. Use --source-file for a camera whose URL carries credentials.")
-    if not a.source.startswith("rtsp://"):
-        print("source must be rtsp:// (what _is_allowed_source permits)")
+    a.source = read_source(a.source_file, a.source)
+    if a.source is None:
         return 2
-    # From here on the URL is never printed: only _R()'d text reaches stdout.
-    print(f"source: {_R(a.source)}")
     if a.race_rate:
         return asyncio.run(_race_rate(a.source, a.race_rate))
     return asyncio.run(_legs(a.source))
