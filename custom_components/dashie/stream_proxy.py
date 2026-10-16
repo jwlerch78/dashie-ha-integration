@@ -55,7 +55,14 @@ RECONNECT_DELAY = 2.0  # Seconds between reconnect attempts
 #   * a lost probe race is TRANSIENT. The shipped argv's 500 ms analyzeduration lost
 #     once in ~7 runs against a tablet RTSP server — "Could not find codec parameters
 #     … unspecified size" → no output stream → ALSO exit 234 with zero frames, and
-#     5/5 consecutive runs afterwards succeeded.
+#     5/5 consecutive runs afterwards succeeded. RE-MEASURED 2026-10-16 on the same
+#     source with the shipping argv: 1 zero-frame run in 14 (7%).
+# ⚠️ But those failures are NOT INDEPENDENT, so do NOT raise 7% to a power and call
+#     the result the give-up risk. In the very next run of the leg harness, TWO
+#     consecutive attempts came back zero-frame (recovering on the third) — which a
+#     7% independent rate makes a ~0.5% event. Reconnects cluster: a camera that just
+#     dropped a client is likelier to lose the next probe too. 2 retries is chosen to
+#     absorb a SHORT cluster, not on a probability.
 # ⇒ the two are INDISTINGUISHABLE from the exit code and the frame count.
 # ⚠️ And stderr cannot separate them either: that same "Could not find codec
 # parameters" line appeared in a run that SUCCEEDED with 10 frames, so a classifier
