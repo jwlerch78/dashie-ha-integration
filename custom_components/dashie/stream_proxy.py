@@ -614,9 +614,19 @@ def _build_ffmpeg_cmd(
         # refused the entire command (exit 234) and the camera silently never
         # loaded. A no-op wherever it was tolerated; fatal wherever it was not.
         #
-        # Do NOT "restore" it. The vendor-SEI concern is real but is already
-        # covered by `-err_detect ignore_err` above, and an input-side -bsf:v
-        # is itself rejected outright by FFmpeg 6 — so moving it is not a fix.
+        # Do NOT "restore" it, and this is now MEASURED rather than argued.
+        # 2026-10-16, against a real Reolink that genuinely emits the vendor SEI
+        # (110 NAL type-6 units in 12 s, logging "SEI type 764 size 34 truncated
+        # at 32"), the identical captured bitstream transcoded to MJPEG with and
+        # without the filter CORRECTLY placed on the input side came out
+        # byte-identical — same size, same sha256. The only difference was the log:
+        # 25 "SEI type 764" warnings became 1.
+        # ⇒ the filter was never about pixels. It suppressed a warning that
+        # `-err_detect ignore_err` above already makes harmless, and the camera
+        # serves frames fine without it (proven by tools/live_camera_mjpeg_check.py
+        # against that camera: all verdicts pass).
+        # An input-side -bsf:v is also rejected outright by FFmpeg 6, so moving it
+        # was never available either. Deleting it costs nothing that was ever real.
     ])
 
     # Video filters: scale + setpts for monotonic timestamps.
