@@ -81,8 +81,26 @@ SKIP_ACCUM_WINDOW = 5.0  # Seconds over which to measure input fps for skip rati
 _hw_accel: str | None = None  # None = not yet detected
 _vaapi_device: str | None = None  # e.g. /dev/dri/renderD128
 
-# Regex to match credentials in RTSP URLs: rtsp://user:pass@host
-_RTSP_CRED_RE = re.compile(r"(rtsp://)([^@]+)@", re.IGNORECASE)
+# Credentials reach the log in TWO shapes and only the first was ever handled:
+#   rtsp://user:pass@host/path          — the documented Reolink/Tapo form
+#   rtsp://host/path?user=x&password=y  — the query form Reolink/Dahua also accept,
+#                                         and which users paste into generic-camera
+# A household on the second shape logged its camera password in PLAINTEXT on every
+# DROP: line, every FFmpeg-cmd debug line and every stderr tail. Added 2026-10-16
+# after a Reolink stream was offered for testing and the URL turned out to BE the
+# credential. Covered by tests/test_redact_url.py — this function is the only thing
+# between a camera password and the log, and it had no tests at all.
+#
+# Also note `[^/@\s]+` rather than `[^@]+`: the old pattern let the match run across
+# slashes, so a URL with an @ anywhere in its PATH redacted the host too — hiding the
+# one field a reader needs. It fails toward over-redaction, which is safe but useless.
+_URL_CRED_RE = re.compile(
+    r"(\b(?:rtsp|rtsps|http|https)://)[^/@\s]+@", re.IGNORECASE
+)
+_QUERY_CRED_RE = re.compile(
+    r"([?&](?:user(?:name)?|pass(?:word)?|pwd|token|auth)=)[^&\s\"'\]]*",
+    re.IGNORECASE,
+)
 
 # Latest-frame cache — populated by the MJPEG stream pipeline, consumed by
 # the snapshot endpoint below. Gives the snapshot endpoint a hot path (≈5ms)
@@ -100,8 +118,9 @@ SNAPSHOT_FFMPEG_TIMEOUT = 5.0
 
 
 def _redact_url(url: str) -> str:
-    """Redact credentials from RTSP URLs for safe logging."""
-    return _RTSP_CRED_RE.sub(r"\1****:****@", url)
+    """Redact credentials from a stream URL (or a log line containing one)."""
+    out = _URL_CRED_RE.sub(r"\1****:****@", url)
+    return _QUERY_CRED_RE.sub(r"\1****", out)
 
 
 class DashieMjpegStreamView(HomeAssistantView):
