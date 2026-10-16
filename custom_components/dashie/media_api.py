@@ -33,21 +33,30 @@ MAX_SCAN_DEPTH = 12
 # How many directory entries the select's "does this folder hold a photo?" probe may
 # examine per top-level folder before giving up and answering no.
 #
-# 🔑 MEASURED on John's real /media shape (55,953 files / 1,739 folders), reproduced
-# synthetically 2026-10-16. An EXISTS check short-circuits only when it FINDS
-# something; proving a folder has NO image costs the whole subtree. The split was:
-#     immich   (132 .JPG, hash-sharded 5 deep)   has_image=True    221 entries
-#     frigate  (55,800 .mp4, no snapshots)       has_image=False  59,330 entries
-# ⇒ 99.6% of the scan was one folder answering "no". First image in immich appeared
-# after 240 entries, so the two cases are three orders of magnitude apart and a cap
-# between them is safe.
+# 🔑 John, 2026-10-16: "i think 100 is actually enough. a folder with photos should
+# really only have photos." That is the right principle, and MEASURED it holds with
+# room to spare — but only because the walk descends EAGERLY (see _has_any_image).
 #
-# ⚠️ What the cap TRADES: a folder whose first image lies beyond the budget is
-# reported as having none, so it drops out of the dropdown. That is why exhausting
-# the budget logs a DROP marker — the exclusion is diagnosable, not silent.
-# 🔑 And the property that matters most: the cost stops tracking recording volume.
-# Without it the scan grows forever with camera retention; with it, it cannot.
-MAX_EXISTENCE_PROBE_ENTRIES = 5000
+# Measured on his real /media shape (55,953 files / 1,739 folders), two stores:
+#     immich   132 .JPG, hash-sharded 5 deep   first photo after  5 entries
+#     frigate  55,800 .mp4, no snapshots       no photo after    57,565 entries
+# ⇒ a real photo store answers in single digits; a recordings tree cannot answer at
+# all. Three to four orders of magnitude apart, so 100 sits comfortably between with
+# ~20x headroom over what Immich actually needs.
+#
+# ⚠️ The 100 DEPENDS on eager descent. An earlier breadth-first version enumerated
+# all 131 hash-shard directories at one level before descending, so the same Immich
+# store needed 240 entries and 100 would have excluded it — the one usable folder on
+# his box. If anyone changes the traversal order, re-measure this number.
+#
+# ⚠️ What the cap TRADES: a folder whose first photo lies beyond the budget is
+# reported as having none and drops out of the dropdown. The residual case is a photo
+# folder that LEADS with a large non-photo subtree, which eager descent would burn the
+# budget inside. That is why exhaustion logs a DROP marker naming the folder.
+# 🔑 And the property that matters more than the ratio: the cost stops tracking
+# recording volume. Unbudgeted it is O(recordings) forever; budgeted it cannot exceed
+# this number per top-level folder whatever the cameras accumulate.
+MAX_EXISTENCE_PROBE_ENTRIES = 100
 
 
 
@@ -398,38 +407,38 @@ def _count_images_recursive(directory: Path, _depth: int = 0) -> int:
 def _has_any_image(directory: Path, budget: int | None = None) -> bool:
     """Does this tree contain at least one image? Stops at the first one, or at a budget.
 
-    This exists because the SELECT entity never used the count: its only use of
+    The SELECT entity never used the count: its only use of
     ``_count_images_recursive``'s return value was ``if count > 0``, evaluated after
     the whole tree had already been walked. A SUM has no early exit — it must visit
-    every term — so producing a dropdown's folder list cost one ``stat()`` per file
-    in the entire tree, which is what outran HA's bootstrap timeout (D-279).
+    every term — so filling a dropdown cost one ``stat()`` per file in the entire
+    tree, which is what outran HA's bootstrap timeout (D-279).
 
-    Iterative and ``os.scandir``-based on purpose: scandir carries the entry type
-    from the directory read, so ``is_file()``/``is_dir()`` usually need no extra
-    stat, and an explicit queue makes the budget exact rather than per-branch.
+    🔑 **Descends EAGERLY**: it recurses into a subdirectory the moment it sees one,
+    rather than finishing the current directory first. That is what makes the budget
+    small enough to be safe. Immich stores photos under two levels of hash sharding
+    (``upload/<uuid>/<hex>/<hex>/<file>.JPG``), so a breadth-first walk enumerates
+    ~131 shard directories before reaching any file — 240 entries — while eager
+    descent reaches a leaf in 5. MEASURED on a real store, both ways.
+
+    ``os.scandir`` carries the entry type from the directory read, so
+    ``is_file()``/``is_dir()`` usually need no extra stat.
 
     Returns False when the budget runs out, which is the honest answer to "did we
     find one" but NOT to "is there one" — see MAX_EXISTENCE_PROBE_ENTRIES.
     """
     if budget is None:
         budget = MAX_EXISTENCE_PROBE_ENTRIES
-    examined = 0
-    queue: list[tuple[Path, int]] = [(directory, 0)]
-    while queue:
-        current, depth = queue.pop(0)
+    state = {"left": budget}
+
+    def walk(path: str, depth: int) -> bool:
         if depth > MAX_SCAN_DEPTH:
-            continue
+            return False
         try:
-            with os.scandir(current) as entries:
+            with os.scandir(path) as entries:
                 for entry in entries:
-                    examined += 1
-                    if examined > budget:
-                        _LOGGER.warning(
-                            "DROP: media probe gave up on %s after %d entries; it will "
-                            "be treated as having no images",
-                            directory, budget,
-                        )
+                    if state["left"] <= 0:
                         return False
+                    state["left"] -= 1
                     try:
                         if entry.is_symlink():
                             continue
@@ -437,12 +446,23 @@ def _has_any_image(directory: Path, budget: int | None = None) -> bool:
                             if Path(entry.name).suffix.lower() in SUPPORTED_EXTENSIONS:
                                 return True
                         elif entry.is_dir(follow_symlinks=False):
-                            queue.append((Path(entry.path), depth + 1))
+                            # Eager descent — the whole reason the budget can be 100.
+                            if walk(entry.path, depth + 1):
+                                return True
                     except OSError:
                         continue
-        except (PermissionError, FileNotFoundError, NotADirectoryError):
-            continue
-    return False
+        except (PermissionError, FileNotFoundError, NotADirectoryError, OSError):
+            return False
+        return False
+
+    found = walk(str(directory), 0)
+    if not found and state["left"] <= 0:
+        _LOGGER.warning(
+            "DROP: media probe gave up on %s after %d entries; it will be treated "
+            "as having no images",
+            directory, budget,
+        )
+    return found
 
 
 def _list_media_folder_names(media_dir: Path) -> list[dict]:
