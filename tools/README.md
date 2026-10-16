@@ -130,3 +130,56 @@ like an answer.
 
 Measured: John's Samsung RTSP server emits **0** SEI NAL units (0 of 219 over
 12 s / 3.5 MB) ⇒ it cannot answer the question. A Reolink is the next candidate.
+
+## `ha_core_validate.py` — does the integration actually work inside Home Assistant?
+
+🔴 **The gap this closes.** Every other test here is a unit test or a harness that
+bypasses HA. `live_camera_mjpeg_check.py` registers `DashieMjpegStreamView` on a
+plain aiohttp app, so `requires_auth = True` and `register_stream_proxy_views()`
+had **never been executed by anything** before this tool existed — and no test
+answered *"does this integration load inside HA at all"*, the failure that would
+hit every user on update. `v1.6.3` shipped without that question being asked.
+
+```bash
+# one-time: an HA Core venv at whatever version you want to validate against
+python3 -m venv /tmp/ha-core/.venv
+/tmp/ha-core/.venv/bin/pip install "homeassistant==2026.9.3"
+
+# each run needs a FRESH config dir — onboarding can create the owner only once
+HA_CORE_ROOT=/tmp/ha-core /tmp/ha-core/.venv/bin/python \
+    tools/ha_core_validate.py /tmp/ha-core/run-$(date +%s)
+```
+
+It starts real HA Core, onboards a real owner, takes a real token, adds a real
+config entry through the real config flow pointed at `fake_dashie_device.py`, and
+then asks six questions:
+
+| phase | question |
+|---|---|
+| 1 | does HA start and the integration import with no fatal log line |
+| 2 | a real auth token |
+| 2.5 | does the config flow create an entry from the user step |
+| 3 | are the HTTP views **registered and auth-gated** |
+| 4 | do the entities actually appear in `/api/states` |
+| 5–6 | which log warnings a Supervisor-less box emits, and what provokes them |
+
+**Measured 2026-10-16, HA Core 2026.9.3, integration `d72b00b`: 18/18.**
+
+⚠️ **It does NOT cover** HACS delivery (needs a real HACS install), the
+Supervisor/add-on bridge paths (HA Core has no Supervisor, so the add-on cannot be
+installed), or a real tablet.
+
+🔴 **Two of its own checks were wrong on the first run and failed a passing
+system.** Both are recorded in the code because both will recur:
+
+- it asserted **401** on an MJPEG probe *before any config entry existed*. The views
+  are registered by `async_setup_entry`, so **404 was correct** — a missing
+  precondition in the instrument, wearing the costume of a product bug.
+- it treated **any** 404 as "route not registered". The view answers 404 with its
+  own JSON error when the camera entity is absent. The **status cannot** tell those
+  apart; only the body can.
+
+⚠️ 318 lines, over the repo's 300-line guideline. Kept whole deliberately: the six
+phases share the HTTP helper, the HA process lifecycle and the result ledger, and
+splitting them would put the teardown of a live HA instance in a different file
+from its startup. Revisit if a seventh phase lands.
