@@ -30,6 +30,25 @@ SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
 # A symlink skip stops a loop; this bounds a pathologically deep real tree too.
 MAX_SCAN_DEPTH = 12
 
+# How many directory entries the select's "does this folder hold a photo?" probe may
+# examine per top-level folder before giving up and answering no.
+#
+# 🔑 MEASURED on John's real /media shape (55,953 files / 1,739 folders), reproduced
+# synthetically 2026-10-16. An EXISTS check short-circuits only when it FINDS
+# something; proving a folder has NO image costs the whole subtree. The split was:
+#     immich   (132 .JPG, hash-sharded 5 deep)   has_image=True    221 entries
+#     frigate  (55,800 .mp4, no snapshots)       has_image=False  59,330 entries
+# ⇒ 99.6% of the scan was one folder answering "no". First image in immich appeared
+# after 240 entries, so the two cases are three orders of magnitude apart and a cap
+# between them is safe.
+#
+# ⚠️ What the cap TRADES: a folder whose first image lies beyond the budget is
+# reported as having none, so it drops out of the dropdown. That is why exhausting
+# the budget logs a DROP marker — the exclusion is diagnosable, not silent.
+# 🔑 And the property that matters most: the cost stops tracking recording volume.
+# Without it the scan grows forever with camera retention; with it, it cannot.
+MAX_EXISTENCE_PROBE_ENTRIES = 5000
+
 
 
 def _get_media_base_path(hass: HomeAssistant) -> Path:
@@ -376,34 +395,53 @@ def _count_images_recursive(directory: Path, _depth: int = 0) -> int:
     return count
 
 
-def _has_any_image(directory: Path, _depth: int = 0) -> bool:
-    """Does this tree contain at least one image? Stops at the first one.
+def _has_any_image(directory: Path, budget: int | None = None) -> bool:
+    """Does this tree contain at least one image? Stops at the first one, or at a budget.
 
     This exists because the SELECT entity never used the count: its only use of
     ``_count_images_recursive``'s return value was ``if count > 0``, evaluated after
     the whole tree had already been walked. A SUM has no early exit — it must visit
     every term — so producing a dropdown's folder list cost one ``stat()`` per file
-    in the entire tree, which is what outran HA's bootstrap timeout on a Frigate
-    ``/media`` (D-279). An existence test short-circuits, so the cost tracks FOLDERS
-    rather than FILES.
+    in the entire tree, which is what outran HA's bootstrap timeout (D-279).
+
+    Iterative and ``os.scandir``-based on purpose: scandir carries the entry type
+    from the directory read, so ``is_file()``/``is_dir()`` usually need no extra
+    stat, and an explicit queue makes the budget exact rather than per-branch.
+
+    Returns False when the budget runs out, which is the honest answer to "did we
+    find one" but NOT to "is there one" — see MAX_EXISTENCE_PROBE_ENTRIES.
     """
-    if _depth > MAX_SCAN_DEPTH:
-        return False
-    try:
-        subdirs = []
-        for item in directory.iterdir():
-            if item.is_symlink():
-                continue
-            if item.is_file():
-                if item.suffix.lower() in SUPPORTED_EXTENSIONS:
-                    return True
-            elif item.is_dir() and not item.name.startswith("."):
-                subdirs.append(item)
-        for sub_dir in subdirs:
-            if _has_any_image(sub_dir, _depth + 1):
-                return True
-    except PermissionError:
-        pass
+    if budget is None:
+        budget = MAX_EXISTENCE_PROBE_ENTRIES
+    examined = 0
+    queue: list[tuple[Path, int]] = [(directory, 0)]
+    while queue:
+        current, depth = queue.pop(0)
+        if depth > MAX_SCAN_DEPTH:
+            continue
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    examined += 1
+                    if examined > budget:
+                        _LOGGER.warning(
+                            "DROP: media probe gave up on %s after %d entries; it will "
+                            "be treated as having no images",
+                            directory, budget,
+                        )
+                        return False
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_file(follow_symlinks=False):
+                            if Path(entry.name).suffix.lower() in SUPPORTED_EXTENSIONS:
+                                return True
+                        elif entry.is_dir(follow_symlinks=False):
+                            queue.append((Path(entry.path), depth + 1))
+                    except OSError:
+                        continue
+        except (PermissionError, FileNotFoundError, NotADirectoryError):
+            continue
     return False
 
 

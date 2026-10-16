@@ -39,6 +39,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from custom_components.dashie import media_api
 from custom_components.dashie.const import CONF_MEDIA_BASE_PATH, DOMAIN
 from custom_components.dashie.media_api import (
     _count_images_recursive,
@@ -312,3 +313,56 @@ async def test_a_failed_scan_backs_off_but_does_eventually_retry(hass):
                           return_value=ent._next_scan_allowed + 1):
             await ent.async_update()
         assert calls == [1], "never retried after the backoff expired"
+
+
+# ------------------------------------------------- the probe budget (D-279, measured)
+
+def test_the_probe_gives_up_LOUDLY_past_its_budget(tmp_path, caplog):
+    """The budget must bound the work AND announce when it changed the answer.
+
+    Measured on John's real /media (55,953 files / 1,739 folders): proving the
+    Frigate subtree held no image cost 59,330 entries — 99.6% of the whole scan —
+    while finding a photo in Immich took 221. So the cap is what stops the cost
+    tracking recording volume.
+
+    ⚠️ It trades correctness for a bound: a folder whose first image sits beyond the
+    budget is reported as having none and drops out of the dropdown. That MUST be
+    loud, or it is a folder silently missing from a picker.
+    """
+    deep = tmp_path / "recordings"
+    deep.mkdir()
+    for d in range(12):
+        sub = deep / f"d{d:02d}"
+        sub.mkdir()
+        for i in range(20):
+            (sub / f"{i}.mp4").write_bytes(b"x")   # 240 entries, no image
+
+    caplog.set_level("WARNING", logger=media_api._LOGGER.name)
+    with patch.object(media_api, "MAX_EXISTENCE_PROBE_ENTRIES", 50):
+        assert _has_any_image(deep) is False
+
+    drops = [r for r in caplog.records
+             if r.levelname == "WARNING" and "DROP: media probe gave up" in r.getMessage()]
+    assert len(drops) == 1, [r.getMessage() for r in caplog.records]
+
+
+def test_a_sparse_deep_photo_folder_is_STILL_found(tmp_path, caplog):
+    """The control that stops the budget being set too tight for real data.
+
+    Mirrors John's Immich store: ~130 images hash-sharded five levels down
+    (`immich/upload/<uuid>/<hex>/<hex>/<uuid>.JPG`). Measured: the first image
+    appears after ~240 entries, three orders of magnitude inside the 5000 budget.
+    Also pins UPPERCASE `.JPG`, which is what his files actually are.
+    """
+    import random
+    random.seed(11)
+    base = tmp_path / "immich" / "upload" / "acct-uuid"
+    for _ in range(132):
+        shard = base / f"{random.randint(0, 255):02x}" / f"{random.randint(0, 255):02x}"
+        shard.mkdir(parents=True, exist_ok=True)
+        (shard / f"{random.getrandbits(64):016x}.JPG").write_bytes(b"x")
+
+    caplog.set_level("WARNING", logger=media_api._LOGGER.name)
+    assert _has_any_image(tmp_path / "immich") is True
+    assert not [r for r in caplog.records if "gave up" in r.getMessage()], \
+        "the budget was exhausted on a realistic photo store"
