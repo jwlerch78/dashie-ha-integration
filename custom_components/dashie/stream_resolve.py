@@ -25,7 +25,7 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .stream_proxy import _get_stream_source, _redact_url
+from .stream_proxy import _get_stream_source, _redact_url, _url_host
 from .go2rtc_manager import Go2RtcManager
 from .feed_registry import get_frigate_camera_for_entity
 from .frigate_stream import build_frigate_rtsp_url
@@ -258,10 +258,12 @@ async def _register_go2rtc_stream(
         # Append the new stream entry
         content = content.rstrip() + f"\n  {stream_name}:\n  - '{rtsp_url}'\n"
         config_path.write_text(content)
+        # host only, not the URL: this is INFO, so a redaction bug here would be
+        # visible on a default install. See _url_host.
         _LOGGER.info(
-            "Added go2rtc stream %s → %s to config",
+            "Added go2rtc stream %s → host %s to config",
             stream_name,
-            _redact_url(rtsp_url),
+            _url_host(rtsp_url),
         )
 
         # Restart go2rtc addon to pick up new config.
@@ -386,7 +388,7 @@ class DashieStreamResolveView(HomeAssistantView):
             if await _go2rtc_has_rtsp_stream(frigate_camera):
                 _LOGGER.info(
                     "Resolved %s via Frigate camera %s → %s",
-                    entity_id, frigate_camera, frigate_rtsp,
+                    entity_id, frigate_camera, _redact_url(frigate_rtsp),
                 )
                 return web.json_response({
                     "rtsp_url": frigate_rtsp,
@@ -425,9 +427,10 @@ class DashieStreamResolveView(HomeAssistantView):
         if raw_rtsp:
             reachable = await _is_rtsp_reachable(raw_rtsp)
             if not reachable:
+                # host only — this is the CREDENTIALED branch and it logs at INFO.
                 _LOGGER.info(
-                    "Credentialed RTSP unreachable for %s: %s",
-                    entity_id, _redact_url(raw_rtsp),
+                    "Credentialed RTSP unreachable for %s: host %s",
+                    entity_id, _url_host(raw_rtsp),
                 )
                 return web.json_response({
                     "rtsp_url": None,
@@ -470,7 +473,7 @@ class DashieStreamResolveView(HomeAssistantView):
                     rtsp_url = rtsp_url_template.replace("{ha_ip}", ha_ip)
                     _LOGGER.info(
                         "Resolved %s → %s (via go2rtc)",
-                        entity_id, rtsp_url,
+                        entity_id, _redact_url(rtsp_url),
                     )
                     return web.json_response({
                         "rtsp_url": rtsp_url,

@@ -153,6 +153,29 @@ def _redact_url(url: str) -> str:
     return _mask_residual_authority(out)
 
 
+def _url_host(url: str) -> str:
+    """Return just `host:port` from a URL — the credential never enters the result.
+
+    🔴 Prefer this over `_redact_url` for anything logged ABOVE debug. The
+    difference matters: `_redact_url` takes a credential-bearing string and tries
+    to remove the secret, so a bug in it leaks. `_url_host` never puts the
+    credential in the output at all, so there is nothing for a bug to leak.
+
+    Written 2026-10-16 after three separate defects in `_redact_url` in one day,
+    two of which printed a real camera password. `stream_resolve` was logging
+    credentialed RTSP URLs at **INFO** — HA's default level — so each of those
+    defects wrote a camera password into `home-assistant.log` on a default
+    install. Redaction is the right tool when you need the whole URL for
+    diagnosis; when all you need is "which host", take only the host.
+    """
+    try:
+        after = url.split("://", 1)[1]
+    except IndexError:
+        return "<unparseable>"
+    authority = after.split("/", 1)[0]
+    return authority.rsplit("@", 1)[-1] or "<unparseable>"
+
+
 def _mask_residual_authority(text: str) -> str:
     """Mask any `scheme://...@` the named patterns failed to recognise."""
     for scheme in ("rtsp://", "rtsps://", "http://", "https://"):

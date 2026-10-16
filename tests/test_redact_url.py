@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.dashie.stream_proxy import _redact_url
+from custom_components.dashie.stream_proxy import _redact_url, _url_host
 
 SECRET = "S3cretPw"
 
@@ -103,3 +103,29 @@ def test_the_whole_ffmpeg_argv_can_be_redacted_elementwise() -> None:
     """How stream_proxy and stream_multiplexer actually call it."""
     argv = ["ffmpeg", "-i", f"rtsp://admin:{SECRET}@host:554/c", "-f", "mjpeg"]
     assert SECRET not in " ".join(_redact_url(a) for a in argv)
+
+
+# --- _url_host: the stronger guarantee for anything logged above debug ---------
+
+def test_url_host_never_contains_the_credential() -> None:
+    """_redact_url removes a secret; _url_host never includes one. For INFO-level
+    logging the second is what you want, because a bug in it cannot leak."""
+    for url in (
+        f"rtsp://admin:{SECRET}@192.168.1.50:554/h264Preview_01_main",
+        f"rtsp://someone@gmail.com:{SECRET}@192.168.1.50:554/s",
+        f"rtsp://weird   user:{SECRET}@192.168.1.50:554/s",
+        f"http://admin:{SECRET}@10.0.0.5:1984/api",
+    ):
+        host = _url_host(url)
+        assert SECRET not in host
+        assert host == "192.168.1.50:554" or host == "10.0.0.5:1984"
+
+
+def test_url_host_on_a_url_with_no_credential() -> None:
+    assert _url_host("rtsp://192.168.86.147:8554/stream1") == "192.168.86.147:8554"
+
+
+def test_url_host_is_defensive_about_junk() -> None:
+    assert _url_host("not a url") == "<unparseable>"
+    assert _url_host("") == "<unparseable>"
+    assert _url_host("rtsp://") == "<unparseable>"
