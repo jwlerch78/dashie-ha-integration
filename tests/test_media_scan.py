@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -136,14 +137,39 @@ def test_symlink_loop_does_not_escape_the_exact_counter(tmp_path):
     assert _count_images_recursive(tmp_path) == 1
 
 
-def test_symlink_loop_leaves_the_folder_list_correct(tmp_path):
-    """L1b — select's `except Exception` SWALLOWS RecursionError, so a leg asserting
-    "an exception escapes" is green against the unfixed code. Assert the ANSWER."""
-    (tmp_path / "pics").mkdir()
-    (tmp_path / "pics" / "a.jpg").write_bytes(b"x")
-    (tmp_path / "pics" / "loop").symlink_to(tmp_path, target_is_directory=True)
-    names = {f["path"] for f in _list_media_folder_names(tmp_path)}
-    assert "pics" in names
+def test_symlink_loop_does_not_multiply_the_existence_scan(tmp_path):
+    """L1b — rewritten TWICE, and the second time is why mutation testing earns its keep.
+
+    v1 asserted the folder list was still CORRECT under a loop. Green with the
+    symlink skip removed: MAX_SCAN_DEPTH already stops the recursion and a loop
+    cannot change a boolean answer. v2 measured work — still green, because the
+    fixture HAD an image, so the check short-circuited and never reached the loop.
+
+    ⇒ the fixture must contain NO image, so the walk is forced to visit everything.
+    Only then is the skip observable. Note the asymmetry with L1a: in the exact
+    COUNTER a loop corrupts the returned number, so correctness catches it there; in
+    an existence check it cannot, so cost is the only observable — and only on the
+    branch that has to walk the whole tree.
+
+    ⚠️ Separately: select's `except Exception` SWALLOWS RecursionError into options
+    `["(error)"]`, so a leg asserting "an exception escapes" is GREEN on that path.
+    """
+    plain, looped = tmp_path / "plain", tmp_path / "looped"
+    plain.mkdir(); looped.mkdir()
+    for root in (plain, looped):
+        (root / "novids").mkdir()
+        (root / "novids" / "clip.mp4").write_bytes(b"x")   # no image: must walk it all
+    (looped / "novids" / "loop").symlink_to(looped, target_is_directory=True)
+
+    with _Counter(plain) as c_plain:
+        assert _list_media_folder_names(plain) == []
+    with _Counter(looped) as c_looped:
+        assert _list_media_folder_names(looped) == []
+
+    assert c_plain.calls > 0, "instrument saw nothing"
+    assert c_looped.calls < c_plain.calls * 3, (
+        f"the loop multiplied the scan: {c_plain.calls} -> {c_looped.calls}"
+    )
 
 
 def test_existence_check_is_true_only_when_an_image_exists(tmp_path):
@@ -243,26 +269,46 @@ async def test_a_successful_empty_scan_is_not_retried(hass):
 
 @pytest.mark.asyncio
 async def test_a_failed_scan_backs_off_but_does_eventually_retry(hass):
-    """L5b — both halves, because each one alone is a different bug.
+    """L5b — both halves, and the FIRST half had to be added after a mutant survived.
 
-    A failure must not leave the empty sentinel for async_update to retry twice a
-    minute (the storm) — and must not become a permanent give-up either, which is the
-    same mistake the MJPEG no-retry rule made in the other direction.
+    An earlier version set `_next_scan_allowed` itself and only tested the READ side.
+    A mutant changing the production write to `float("inf")` — a permanent give-up —
+    passed it, because the test fabricated the state instead of driving the code that
+    writes it. So half (a) drives a real failure and asserts the written value is
+    FINITE and bounded.
+
+    Both halves matter: a failure must not leave the empty sentinel for async_update
+    to retry twice a minute (the storm), and must not become a permanent give-up
+    either — which is the same mistake the MJPEG no-retry rule made in reverse.
     """
+    import custom_components.dashie.select as select_mod
     ent, CoordinatorEntity = _entity(hass)
-    ent._scanned = True
-    ent._scan_failures = 1
-    ent._next_scan_allowed = 1_000_000.0
 
+    # (a) a REAL failure, so production sets _scanned / _scan_failures / the backoff
+    def boom(_hass):
+        raise OSError("media unavailable")
+
+    with patch.object(select_mod, "_get_media_base_path", boom):
+        await ent._update_folder_options()
+
+    before = time.monotonic()
+    assert ent._scanned is True, "a failure left the empty sentinel for async_update"
+    assert ent._scan_failures == 1
+    assert ent._attr_options == ["(error)"]
+    import math
+    assert math.isfinite(ent._next_scan_allowed), "a give-up, not a backoff"
+    assert ent._next_scan_allowed <= before + 3600, "backoff is unbounded"
+
+    # (b) the read side: silent inside the window, retries once it expires
     calls = []
     stub = lambda self: (calls.append(1), _noop_async())[1]
-
     with patch.object(CoordinatorEntity, "async_update", _noop_async), \
          patch.object(type(ent), "_update_folder_options", stub):
-        with patch("custom_components.dashie.select.time.monotonic", return_value=999_999.0):
+        with patch.object(select_mod.time, "monotonic",
+                          return_value=ent._next_scan_allowed - 1):
             await ent.async_update()
         assert calls == [], "retried inside the backoff window"
-
-        with patch("custom_components.dashie.select.time.monotonic", return_value=1_000_001.0):
+        with patch.object(select_mod.time, "monotonic",
+                          return_value=ent._next_scan_allowed + 1):
             await ent.async_update()
-        assert calls == [1], "never retried after the backoff expired — a give-up, not a backoff"
+        assert calls == [1], "never retried after the backoff expired"
