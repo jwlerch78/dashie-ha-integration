@@ -130,11 +130,32 @@ class DashieVolumeNumber(DashieEntity, NumberEntity):
 
 
 class DashieZoomNumber(DashieEntity, NumberEntity):
-    """Zoom/text scaling number entity."""
+    """Zoom/text scaling number entity.
 
-    _attr_native_min_value = 50
-    _attr_native_max_value = 200
-    _attr_native_step = 10
+    Bounds and step are PARITY with the app's own HA-dashboard zoom picker
+    (`halite/settings/schemas/DisplayPageSchema.kt`, `dashboardZoomSubScreen`,
+    `settingKey = "display.dashboardZoom"`). D-281 item 5, `gohamstergo`.
+
+    Three things were wrong, and the reporter noticed one:
+      * floor was 50; the picker's lowest rung is 25 and its **Custom** input
+        accepts from **10** (`customInputPlaceholder = "10-300"`).
+      * ceiling was 200; the picker goes to **300**.
+      * step was 10, which cannot express 25, 75, 125 or 175 - four real rungs.
+        Step 5 expresses all thirteen (25/50/60/75/90/100/110/125/150/175/200/
+        250/300) and every Custom value in range, all being multiples of 5.
+
+    ⚠️ It stays a SLIDER deliberately. A `select` of the thirteen rungs was
+    considered and is WORSE: the picker has a **Custom** free-input option, so any
+    value in 10-300 is supported and a select could not express one. The ladder is
+    the convenient set, not the valid set.
+
+    ⚠️ This mirrors a Kotlin range by hand. `DisplayPageSchema.kt` is the source of
+    truth; `tests/test_zoom_bounds.py` is what should fail if that ladder moves.
+    """
+
+    _attr_native_min_value = 10
+    _attr_native_max_value = 300
+    _attr_native_step = 5
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_mode = NumberMode.SLIDER
     _attr_icon = "mdi:magnify-plus-outline"
