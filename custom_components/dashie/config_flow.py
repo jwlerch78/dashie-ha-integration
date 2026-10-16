@@ -19,6 +19,8 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_MEDIA_FOLDER,
+    CONF_MEDIA_BASE_PATH,
+    DEFAULT_MEDIA_BASE_PATH,
     host_for_url as _host_for_url,
 )
 
@@ -436,9 +438,16 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
                     await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
                 # Return options (media folder)
+                # NB: this REPLACES options wholesale, so every option must be
+                # listed here or it is silently dropped on the next save.
                 return self.async_create_entry(
                     title="",
-                    data={CONF_MEDIA_FOLDER: user_input.get(CONF_MEDIA_FOLDER, DEFAULT_MEDIA_FOLDER)},
+                    data={
+                        CONF_MEDIA_FOLDER: user_input.get(CONF_MEDIA_FOLDER, DEFAULT_MEDIA_FOLDER),
+                        CONF_MEDIA_BASE_PATH: user_input.get(
+                            CONF_MEDIA_BASE_PATH, DEFAULT_MEDIA_BASE_PATH
+                        ).strip(),
+                    },
                 )
 
         # Get current values
@@ -448,6 +457,9 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
         )
         current_password = self.config_entry.data.get(CONF_PASSWORD, "")
         current_port = self.config_entry.data.get(CONF_PORT, DEFAULT_PORT)
+        current_media_base = self.config_entry.options.get(
+            CONF_MEDIA_BASE_PATH, DEFAULT_MEDIA_BASE_PATH
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -464,6 +476,15 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_MEDIA_FOLDER,
                         default=current_folder
+                    ): str,
+                    # The WRITER for a key that had only a reader. _get_media_base_path
+                    # advertises a 4-rung priority order whose rung 2 could never fire:
+                    # nothing in this flow or in __init__ ever set it, leaving the
+                    # DASHIE_MEDIA_PATH env var as the only override — unreachable on
+                    # HAOS, so an affected household had no lever at all (D-279).
+                    vol.Optional(
+                        CONF_MEDIA_BASE_PATH,
+                        default=current_media_base,
                     ): str,
                 }
             ),

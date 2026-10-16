@@ -18,6 +18,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
+    CONF_MEDIA_BASE_PATH,
     DOMAIN,
     CONF_HOST,
     CONF_PORT,
@@ -223,6 +224,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    # Publish the media-path option where _get_media_base_path already reads it.
+    # It read hass.data[DOMAIN][CONF_MEDIA_BASE_PATH] and nothing ever wrote it, so
+    # its documented rung 2 was dead (D-279).
+    # ⚠️ hass.data[DOMAIN] is DOMAIN-level while the option is PER-ENTRY, so with
+    # several Dashie devices the last entry to set up with a non-empty value wins.
+    # A media path is a property of the box rather than of a tablet, so that is
+    # tolerable, but it is why only a non-empty value is written: an entry that
+    # leaves the field blank must not clear another entry's setting.
+    media_base = (entry.options.get(CONF_MEDIA_BASE_PATH) or "").strip()
+    if media_base:
+        hass.data[DOMAIN][CONF_MEDIA_BASE_PATH] = media_base
 
     # Migrate from legacy ANDROID_ID-based deviceID to hardware-backed stableDeviceID
     # if the device now reports one. Must run before platform setup so entities are

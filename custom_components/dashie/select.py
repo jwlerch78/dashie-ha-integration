@@ -23,7 +23,10 @@ from .const import (
 )
 from .coordinator import DashieCoordinator
 from .entity import DashieEntity
-from .media_api import _get_media_base_path, _list_media_folders
+import asyncio
+import time
+
+from .media_api import _get_media_base_path, _list_media_folder_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -116,19 +119,50 @@ class DashieScreensaverPhotoFolderSelect(DashieEntity, SelectEntity):
         self._attr_name = "Screensaver: Photo Src Folder"
         self._cached_folders: list[dict] = []
         self._attr_options = ["(root)"]  # Default until we fetch folders
+        # ``_cached_folders == []`` must NOT be the "not scanned yet" sentinel. It
+        # conflated "never scanned" with "scanned and found nothing", and
+        # async_update retried on that emptiness every SCAN_INTERVAL (5 s) — so a
+        # /media with subfolders but no images (Frigate recordings: SUPPORTED_EXTENSIONS
+        # has no .mp4) re-walked the whole tree forever, successfully, with no
+        # exception and nothing above debug in the log. D-279.
+        self._scanned = False
+        self._scan_failures = 0
+        self._next_scan_allowed = 0.0
+        self._scan_task = None
 
     async def async_added_to_hass(self) -> None:
-        """Run when entity is added to hass."""
+        """Run when entity is added to hass.
+
+        The folder scan is NOT awaited here. Awaiting it put a filesystem walk on
+        HA's setup critical path, and on a large /media it outran the bootstrap
+        stage-2 timeout, so the whole config entry landed in ``setup_error`` on
+        every restart (D-279). It runs in the background instead; options stay at
+        their default until it lands.
+
+        The task is cancelled when the entity is removed. Without that, the job
+        outlives an unload and its completion races a re-setup.
+        """
         await super().async_added_to_hass()
-        # Fetch available folders
-        await self._update_folder_options()
+        self._scan_task = self._hass.async_create_background_task(
+            self._update_folder_options(),
+            name=f"dashie media folder scan {self._attr_unique_id}",
+        )
+        self.async_on_remove(self._cancel_scan)
+
+    def _cancel_scan(self) -> None:
+        """Stop an in-flight scan so it cannot outlive this entity."""
+        task = self._scan_task
+        if task is not None and not task.done():
+            task.cancel()
 
     async def _update_folder_options(self) -> None:
         """Fetch available folders from HA Media and update options."""
         try:
             media_dir = await self._hass.async_add_executor_job(_get_media_base_path, self._hass)
             if media_dir.exists():
-                folders = await self._hass.async_add_executor_job(_list_media_folders, media_dir)
+                folders = await self._hass.async_add_executor_job(
+                    _list_media_folder_names, media_dir
+                )
                 self._cached_folders = folders
                 # Build options list - use folder name for display, path for value
                 options = []
@@ -144,8 +178,23 @@ class DashieScreensaverPhotoFolderSelect(DashieEntity, SelectEntity):
                 else:
                     self._attr_options = ["(no folders)"]
                 _LOGGER.debug("Updated folder options: %s", self._attr_options)
+            # Scanned, whatever the result. An empty result is an ANSWER, not a
+            # reason to scan again.
+            self._scanned = True
+            self._scan_failures = 0
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            _LOGGER.warning("Failed to fetch media folders: %s", e)
+            # Also "scanned": a failure must not leave the empty-list sentinel
+            # behind for async_update to retry twice a minute forever.
+            self._scanned = True
+            self._scan_failures += 1
+            delay = min(60 * 2 ** (self._scan_failures - 1), 3600)
+            self._next_scan_allowed = time.monotonic() + delay
+            _LOGGER.warning(
+                "DROP: media folder scan failed (%s attempt(s)), retrying in %ss: %s",
+                self._scan_failures, delay, e,
+            )
             self._attr_options = ["(error)"]
 
     @property
@@ -187,9 +236,13 @@ class DashieScreensaverPhotoFolderSelect(DashieEntity, SelectEntity):
     async def async_update(self) -> None:
         """Update entity state - also refresh folder list periodically."""
         await super().async_update()
-        # Refresh folder list if we don't have any cached
-        if not self._cached_folders or len(self._cached_folders) == 0:
-            await self._update_folder_options()
+        # Re-scan only if we have never completed one, or if the last one FAILED
+        # and its backoff has expired. Never because the result was empty.
+        if self._scanned and (
+            self._scan_failures == 0 or time.monotonic() < self._next_scan_allowed
+        ):
+            return
+        await self._update_folder_options()
 
 
 class DashieMotionWakeModeSelect(DashieEntity, SelectEntity):

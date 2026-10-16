@@ -27,6 +27,9 @@ _LOGGER = logging.getLogger(__name__)
 # Supported image formats
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
 
+# A symlink skip stops a loop; this bounds a pathologically deep real tree too.
+MAX_SCAN_DEPTH = 12
+
 
 
 def _get_media_base_path(hass: HomeAssistant) -> Path:
@@ -342,18 +345,98 @@ def _list_media_folders(media_dir: Path) -> list[dict]:
     return folders
 
 
-def _count_images_recursive(directory: Path) -> int:
-    """Count images in a directory recursively."""
+def _count_images_recursive(directory: Path, _depth: int = 0) -> int:
+    """Count images in a directory recursively. EXACT — serves the HTTP view only.
+
+    ``photo_count`` from this function goes over the wire and is DISPLAYED to the
+    user: ``HaMediaPhotoSource.kt`` reads it and ``SidebarScreensaverDialogs.kt``
+    renders "<n> photos" in the app's screensaver picker, defaulting to 0 when the
+    field is absent. So it fails SOFT — weakening it shows "0 photos" everywhere and
+    raises nothing. It is a cross-boundary wire contract; do not make it approximate
+    without a JS_KOTLIN_CONTRACTS row.
+
+    ``is_dir()`` follows symlinks, so a link to an ancestor recurses forever. The
+    HTTP view has no try/except around this call, so that escapes as a 500. The
+    symlink skip and the depth cap are both load-bearing.
+    """
+    if _depth > MAX_SCAN_DEPTH:
+        _LOGGER.warning("DROP: media scan depth cap hit at %s", directory)
+        return 0
     count = 0
     try:
         for item in directory.iterdir():
+            if item.is_symlink():
+                continue
             if item.is_file() and item.suffix.lower() in SUPPORTED_EXTENSIONS:
                 count += 1
             elif item.is_dir() and not item.name.startswith("."):
-                count += _count_images_recursive(item)
+                count += _count_images_recursive(item, _depth + 1)
     except PermissionError:
         pass
     return count
+
+
+def _has_any_image(directory: Path, _depth: int = 0) -> bool:
+    """Does this tree contain at least one image? Stops at the first one.
+
+    This exists because the SELECT entity never used the count: its only use of
+    ``_count_images_recursive``'s return value was ``if count > 0``, evaluated after
+    the whole tree had already been walked. A SUM has no early exit — it must visit
+    every term — so producing a dropdown's folder list cost one ``stat()`` per file
+    in the entire tree, which is what outran HA's bootstrap timeout on a Frigate
+    ``/media`` (D-279). An existence test short-circuits, so the cost tracks FOLDERS
+    rather than FILES.
+    """
+    if _depth > MAX_SCAN_DEPTH:
+        return False
+    try:
+        subdirs = []
+        for item in directory.iterdir():
+            if item.is_symlink():
+                continue
+            if item.is_file():
+                if item.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    return True
+            elif item.is_dir() and not item.name.startswith("."):
+                subdirs.append(item)
+        for sub_dir in subdirs:
+            if _has_any_image(sub_dir, _depth + 1):
+                return True
+    except PermissionError:
+        pass
+    return False
+
+
+def _list_media_folder_names(media_dir: Path) -> list[dict]:
+    """Folders that contain at least one image, WITHOUT counting them.
+
+    Same ``name``/``path`` shape the select reads; deliberately no ``photo_count``,
+    because the select never displays one and computing it is the D-279 defect. The
+    HTTP view keeps ``_list_media_folders`` and its exact counts.
+    """
+    folders: list[dict] = []
+    try:
+        has_root = any(
+            f.is_file() and not f.is_symlink() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+            for f in media_dir.iterdir()
+        )
+    except PermissionError:
+        has_root = False
+    if has_root:
+        folders.append({"name": ".", "path": "."})
+
+    try:
+        for item in sorted(media_dir.iterdir()):
+            if item.is_symlink() or not item.is_dir() or item.name.startswith("."):
+                continue
+            if _has_any_image(item):
+                folders.append({"name": item.name, "path": item.name})
+    except PermissionError:
+        pass
+
+    if len(folders) > 1 or (len(folders) == 1 and folders[0]["path"] != "."):
+        folders.insert(0, {"name": "*", "path": "*"})
+    return folders
 
 
 def _get_content_type(path: Path) -> str:
