@@ -18,6 +18,7 @@ token instead of the raw account JWT to shrink the blast radius of a leaked secr
 """
 from __future__ import annotations
 
+import asyncio
 import glob
 import json
 import logging
@@ -81,24 +82,37 @@ _BRIDGE_HEADER_HA = "x-dashie-voice-bridge-secret"
 # add-on defaults to observe mode — a silent drop, which is worse than the HA edition's
 # loud one. `dashie*` covers every present and future channel of both products without
 # naming any of them, and is narrow enough not to read a sibling add-on's secret.
-# 🔴 `*dashie*`, not `dashie*`. HA names addon_configs/<dir> after the add-on's FULL
-# slug, and almost no real install leaves that starting with "dashie":
-#   repo install   62f754e2_dashie_ha      (repo-hash prefix)
-#   local install  local_dashie
-#   official       core_dashie
-# A `dashie*` prefix matched ONLY a bare `dashie` directory, which HA essentially
-# never creates — measured 2026-10-16: 1 of 6 realistic slug forms, and the 1 was
-# the unrealistic one. So for the family Console, whose addon_config mount is the
-# ONLY channel, the secret was effectively never findable: bridge auth could not be
-# enforced, and flipping `bridge_auth_enforce` would have 401'd every call.
-# This is the SAME defect `_is_dashie_addon` was fixed for on 2026-07-30 ("match on
-# suffix, never equality alone") — the slug matcher was corrected and this glob,
-# four lines away, was not. Pinned by tests/test_bridge_secret_globs.py.
+# 🔴 LAST RESORT ONLY. Read `_bridge_headers` first — the secret is normally found by
+# EXACT path from the Supervisor-discovered slug, and this glob is the fallback for
+# when Supervisor cannot be asked.
+#
+# Why a glob cannot be the primary lookup, measured on John's box 2026-10-16: the
+# secret is per-add-on-instance and randomly generated, and his box had NINE of them
+# — the running add-on, two older repo-hash installs of it, two Console dirs and four
+# `chickadee` dirs, plus `.dashie_voice`. HA names each dir after the add-on's FULL
+# slug, so almost none start with "dashie" (`e55d11ca_dashie_ha_dev`, `local_dashie`,
+# `core_dashie`). A `dashie*` prefix matched NOTHING there, which was the original bug.
+# But widening it to `*dashie*` matched FOUR and this code takes sorted()[0] —
+# `01f10a62_dashie`, a DEAD add-on's secret. So the obvious fix returned a WRONG
+# secret, and worse, short-circuited before `.dashie_voice/bridge_secret`, which held
+# the right one. ⇒ a broadened glob can leave a box worse off than the bug.
 _BRIDGE_SECRET_GLOBS = (
-    "addon_configs/*dashie*/bridge_secret",  # either product, any channel, any slug prefix
+    "addon_configs/*dashie*/bridge_secret",  # any product, any channel, any slug prefix
     ".dashie_voice/bridge_secret",           # HA edition's HA-config-dir channel
 )
 _bridge_secret: str | None = None
+_glob_secret_warned = False  # the glob fallback warns once, not per call
+
+# A kiosk authorize that arrives while the add-on is still coming up must not fail
+# permanently. Measured on John's box 2026-10-16: HA and the integration came up
+# before the add-on, the bridge-secret lookup missed exactly ONCE and then succeeded,
+# and the kiosk authorize 3 s later failed with addon_unavailable — a startup race that
+# self-healed for the secret but NOT for the tablet, which got a hard failure.
+# Bounded and loud for the same reason as ZERO_FRAME_RETRIES in stream_proxy: 0 retries
+# fails a tablet for a transient, and an unbounded wait holds an HTTP request open.
+# ~5 s total absorbs a race; it deliberately does NOT try to outwait a cold add-on start.
+AUTHORIZE_RETRIES = 2
+AUTHORIZE_RETRY_DELAY = 2.0
 
 # Fallback addresses if Supervisor discovery is unavailable.
 # TODO(config): also allow a config_flow override.
@@ -201,62 +215,88 @@ def _is_dev_addon(a: dict) -> bool:
     return (a.get("slug") or "").endswith("_dev") or "(Dev)" in (a.get("name") or "")
 
 
-async def _discover_via_supervisor(session) -> list[str]:
-    """Resolve Dashie add-on base URLs (http://<ip>:8099) via the Supervisor API.
+_discovered_slugs: list[str] = []  # dev-first; cached once Supervisor answers
 
-    Returns ALL installed Dashie add-ons, **dev channel first** — a dev box runs
-    both channels and the developer signs into the dev add-on, so the integration
-    must prefer it; a field box has only prod, so prod is picked. The caller uses
-    the first base that actually answers (and caches it). Empty list when none
-    found or no Supervisor token.
+
+async def _addon_slugs(session) -> list[str]:
+    """Installed Dashie add-on slugs, DEV FIRST. Cached after the first success.
+
+    One copy, shared by base-URL discovery and the bridge-secret lookup, because both
+    questions are really "which add-on is actually installed here" and a second copy
+    would drift. The secret lookup cannot be correct without it: secrets are
+    per-instance and random, so a box that ever installed the add-on from a second
+    repo, or also ran the Console, has several different secrets on disk and only one
+    is current.
     """
+    global _discovered_slugs
+    if _discovered_slugs:
+        return _discovered_slugs
     if not SUPERVISOR_TOKEN:
-        _LOGGER.debug("no SUPERVISOR_TOKEN — skipping add-on discovery")
+        _LOGGER.debug("no SUPERVISOR_TOKEN — cannot enumerate add-ons")
         return []
     headers = {"Authorization": f"Bearer {SUPERVISOR_TOKEN}"}
     try:
-        async with session.get(f"{SUPERVISOR_URL}/addons", headers=headers, timeout=_TIMEOUT) as resp:
+        async with session.get(
+            f"{SUPERVISOR_URL}/addons", headers=headers, timeout=_TIMEOUT
+        ) as resp:
             if resp.status != 200:
                 _LOGGER.debug("supervisor /addons HTTP %s", resp.status)
                 return []
             addons = ((await resp.json()).get("data") or {}).get("addons") or []
-        matches = [a for a in addons if _is_dashie_addon(a)]
-        if not matches:
-            _LOGGER.debug("dashie add-on not found in supervisor list")
-            return []
-        # Dev first (developer intent), then prod.
-        matches.sort(key=lambda a: 0 if _is_dev_addon(a) else 1)
-        # 🔴 SAY WHICH ONE WON when there is a real choice (2026-08-20, T s42 cont.10).
-        # A box running both channels silently resolves DEV, and the device code a prod-flavor
-        # tablet minted lives in the PROD backend — so provisioning fails with "Device code not
-        # found", which names neither the choice nor the mismatch. It cost a diagnosis cycle.
-        # INFO, not debug: the whole problem is that this decision was invisible in a normal log.
-        # One candidate is the ordinary field case and stays quiet — noise here would be ignored.
-        if len(matches) > 1:
-            _LOGGER.info(
-                "multiple Dashie add-ons installed — preferring %s (dev-first); also found: %s. "
-                "If a device fails to provision with 'device code not found', check that the app "
-                "build targets the same environment as this add-on channel.",
-                matches[0].get("slug"),
-                ", ".join(a.get("slug") or "?" for a in matches[1:]),
-            )
-        bases: list[str] = []
-        for a in matches:
-            slug = a.get("slug")
-            try:
-                async with session.get(f"{SUPERVISOR_URL}/addons/{slug}/info", headers=headers, timeout=_TIMEOUT) as resp:
-                    if resp.status != 200:
-                        continue
-                    info = (await resp.json()).get("data") or {}
-            except Exception:  # noqa: BLE001
-                continue
-            host = info.get("ip_address") or info.get("hostname")
-            if host:
-                bases.append(f"http://{host}:{ADDON_PORT}")
-        return bases
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("supervisor discovery failed: %s", err)
         return []
+    matches = [a for a in addons if _is_dashie_addon(a)]
+    if not matches:
+        _LOGGER.debug("dashie add-on not found in supervisor list")
+        return []
+    # Dev first (developer intent), then prod.
+    matches.sort(key=lambda a: 0 if _is_dev_addon(a) else 1)
+    # 🔴 SAY WHICH ONE WON when there is a real choice (2026-08-20, T s42 cont.10).
+    # A box running both channels silently resolves DEV, and the device code a prod-flavor
+    # tablet minted lives in the PROD backend — so provisioning fails with "Device code not
+    # found", which names neither the choice nor the mismatch. It cost a diagnosis cycle.
+    # INFO, not debug: the whole problem is that this decision was invisible in a normal log.
+    # One candidate is the ordinary field case and stays quiet — noise here would be ignored.
+    if len(matches) > 1:
+        _LOGGER.info(
+            "multiple Dashie add-ons installed — preferring %s (dev-first); also found: %s. "
+            "If a device fails to provision with 'device code not found', check that the app "
+            "build targets the same environment as this add-on channel.",
+            matches[0].get("slug"),
+            ", ".join(a.get("slug") or "?" for a in matches[1:]),
+        )
+    _discovered_slugs = [a["slug"] for a in matches if a.get("slug")]
+    return _discovered_slugs
+
+
+async def _discover_via_supervisor(session) -> list[str]:
+    """Resolve Dashie add-on base URLs (http://<ip>:8099) via the Supervisor API.
+
+    Returns ALL installed Dashie add-ons, **dev channel first** — see `_addon_slugs`
+    for the ordering and why it is shared with the secret lookup. The caller uses the
+    first base that actually answers (and caches it). Empty list when none found or
+    no Supervisor token.
+    """
+    slugs = await _addon_slugs(session)
+    if not slugs:
+        return []
+    headers = {"Authorization": f"Bearer {SUPERVISOR_TOKEN}"}
+    bases: list[str] = []
+    for slug in slugs:
+        try:
+            async with session.get(
+                f"{SUPERVISOR_URL}/addons/{slug}/info", headers=headers, timeout=_TIMEOUT
+            ) as resp:
+                if resp.status != 200:
+                    continue
+                info = (await resp.json()).get("data") or {}
+        except Exception:  # noqa: BLE001
+            continue
+        host = info.get("ip_address") or info.get("hostname")
+        if host:
+            bases.append(f"http://{host}:{ADDON_PORT}")
+    return bases
 
 
 def _secret_headers(secret: str) -> dict:
@@ -270,36 +310,93 @@ async def _bridge_headers(hass: HomeAssistant) -> dict:
     {} is only survivable against the family Console (observe mode). The HA edition enforces
     from birth, so an empty return there means every call 401s — if that happens, the secret
     file is missing or unreadable, not optional.
+
+    🔴 ORDER IS THE WHOLE POINT, and it is ordered by AUTHORITY, not convenience:
+
+      1. `addon_configs/<slug>/bridge_secret` for each Supervisor-discovered slug, dev
+         first. This is the only candidate that is *known* to belong to an add-on that
+         is actually installed.
+      2. `.dashie_voice/bridge_secret` — the HA edition's own channel in the HA config
+         dir, written by the running add-on.
+      3. only then a glob, which on a box with stale installs is a lottery.
+
+    Measured on John's box 2026-10-16: nine bridge_secret files, eight of them from
+    add-ons no longer running. A glob-first lookup picked a dead one. See
+    `_BRIDGE_SECRET_GLOBS`.
+
+    ⚠️ A FAILURE IS NOT CACHED, deliberately — only a success is. That is what makes the
+    startup race self-healing: HA can come up before the add-on, this returns {} once,
+    and the next call finds the secret. John's log showed the not-found warning exactly
+    ONCE, which is the signature of precisely that. Do not "optimize" by caching the
+    miss; see `authorize_device` for the retry that depends on this.
     """
-    global _bridge_secret
+    global _bridge_secret, _glob_secret_warned
     if _bridge_secret:
         return _secret_headers(_bridge_secret)
 
-    def _read() -> str | None:
-        # Each product publishes to its own location, and each can appear under HA's config
-        # dir or at the filesystem root depending on the install — try the cross product.
+    session = async_get_clientsession(hass)
+    slugs = await _addon_slugs(session)
+    exact = [f"addon_configs/{slug}/bridge_secret" for slug in slugs]
+    exact.append(".dashie_voice/bridge_secret")
+
+    def _read_exact() -> tuple[str | None, str | None]:
+        # Each product publishes to its own location, and each can appear under HA's
+        # config dir or at the filesystem root depending on the install — try both.
+        for rel in exact:
+            for candidate in (hass.config.path(rel), "/" + rel):
+                try:
+                    with open(candidate, encoding="utf-8") as fh:
+                        val = (fh.read() or "").strip()
+                    if val:
+                        return val, candidate
+                except (FileNotFoundError, OSError):
+                    continue
+        return None, None
+
+    def _read_glob() -> tuple[str | None, str | None]:
         for pattern in _BRIDGE_SECRET_GLOBS:
             for base in (hass.config.path(pattern), "/" + pattern):
                 for candidate in sorted(glob.glob(base)):
                     try:
                         with open(candidate, encoding="utf-8") as fh:
                             val = (fh.read() or "").strip()
-                            if val:
-                                _LOGGER.debug("bridge secret found at %s", candidate)
-                                return val
+                        if val:
+                            return val, candidate
                     except (FileNotFoundError, OSError):
                         continue
-        return None
+        return None, None
 
-    secret = await hass.async_add_executor_job(_read)
+    secret, where = await hass.async_add_executor_job(_read_exact)
     if secret:
         _bridge_secret = secret
-        _LOGGER.info("Bridge secret loaded")
+        _LOGGER.info("Bridge secret loaded from %s", where)
         return _secret_headers(secret)
+
+    secret, where = await hass.async_add_executor_job(_read_glob)
+    if secret:
+        # NOT cached, on purpose: this one may belong to an add-on that is no longer
+        # installed, and caching it would pin a wrong secret for the whole process.
+        # Leaving it uncached means the authoritative path above wins as soon as it
+        # exists. Warned once, because retrying every call must not spam.
+        if not _glob_secret_warned:
+            _glob_secret_warned = True
+            _LOGGER.warning(
+                "DROP: bridge secret found only by GLOB, at %s — no Supervisor-discovered "
+                "add-on had one. This may be a STALE add-on's secret (secrets are "
+                "per-instance and random), in which case add-on calls will 401 with a "
+                "header present. Using it anyway rather than sending none, and NOT caching "
+                "it so the authoritative path wins if it appears.",
+                where,
+            )
+        return _secret_headers(secret)
+
     _LOGGER.warning(
-        "No bridge secret found in %s — calls to the HA-edition add-on will 401 "
-        "(it enforces the bridge header from birth); the family Console will fall back "
-        "to observe mode and work, silently, unauthenticated",
+        "No bridge secret found for add-on(s) %s, nor in %s — calls to the HA-edition "
+        "add-on will 401 (it enforces the bridge header from birth); the family Console "
+        "will fall back to observe mode and work, silently, unauthenticated. If Home "
+        "Assistant has just restarted this is expected and self-heals: the add-on may not "
+        "have provisioned the secret yet, and the next call re-reads.",
+        ", ".join(slugs) or "<none discovered>",
         ", ".join(_BRIDGE_SECRET_GLOBS),
     )
     return {}
@@ -453,7 +550,54 @@ async def get_voice_config(hass: HomeAssistant) -> dict:
 
 
 async def authorize_device(hass: HomeAssistant, user_code: str) -> tuple[dict, int]:
-    """Ask the add-on to authorize a pending kiosk device code into the household account.
+    """Authorize a pending kiosk device code, retrying a STARTUP RACE a bounded number of times.
+
+    The transient this exists for, measured on a real box 2026-10-16: Home Assistant and
+    this integration can finish starting before the Dashie add-on does. In that window
+    every add-on call fails with `addon_unavailable`, and a tablet asking to sign in gets
+    a hard failure for a condition that clears itself seconds later. The bridge-secret
+    lookup already self-heals (it never caches a miss — see `_bridge_headers`); this gives
+    the authorize path the same property.
+
+    Bounded and loud, not 0 and not unbounded: 0 fails a tablet over a transient, and
+    waiting indefinitely holds an HTTP request open. Only `addon_unavailable` is retried —
+    a 401, a 404 or a refusal from jwt-auth is an ANSWER, and retrying an answer just
+    delays it.
+
+    Returns (body, status). Never raises.
+    """
+    global _working_base
+    body: dict = {}
+    status = 503
+    for attempt in range(1, AUTHORIZE_RETRIES + 2):
+        body, status = await _authorize_device_once(hass, user_code)
+        if status != 503 or (body or {}).get("error") != "addon_unavailable":
+            return body, status
+        if attempt == 1:
+            _LOGGER.warning(
+                "DROP: kiosk authorize could not reach the Dashie add-on (attempt 1 of %d). "
+                "This is the shape of a startup race — if HA has just restarted, the add-on "
+                "may still be coming up. Retrying in %.0fs.",
+                AUTHORIZE_RETRIES + 1,
+                AUTHORIZE_RETRY_DELAY,
+            )
+        if attempt > AUTHORIZE_RETRIES:
+            _LOGGER.error(
+                "DROP: kiosk authorize gave up after %d attempt(s) — the add-on never "
+                "answered. A tablet asking to sign in during this window fails; if the "
+                "add-on is simply still starting, ask again in a moment.",
+                attempt,
+            )
+            return body, status
+        # The cached base may be the one that just died, and a stale base would make every
+        # retry fail identically. Force a re-resolve.
+        _working_base = None
+        await asyncio.sleep(AUTHORIZE_RETRY_DELAY)
+    return body, status
+
+
+async def _authorize_device_once(hass: HomeAssistant, user_code: str) -> tuple[dict, int]:
+    """One attempt at the add-on authorize call. Wrapped by `authorize_device`.
 
     Kiosk Real Login, Phase 1. A LAN tablet has created a device code and wants a REAL account
     session instead of the anonymous-kiosk mirror. The add-on holds the account JWT, so it calls
@@ -501,7 +645,19 @@ async def authorize_device(hass: HomeAssistant, user_code: str) -> tuple[dict, i
             )
         return (body or {}, status)
 
-    return ({"error": "addon_unavailable", "message": f"Dashie add-on unreachable: {last_err}"}, 503)
+    return (
+        {
+            "error": "addon_unavailable",
+            # Reaches the tablet as-is (voice_view passes `message` through), so it is
+            # written for whoever is standing in front of it, not for a log reader.
+            "message": (
+                "The Dashie add-on isn't responding yet. If Home Assistant just "
+                "restarted, wait a moment and try again."
+            ),
+            "detail": f"add-on unreachable: {last_err}",
+        },
+        503,
+    )
 
 
 async def converse_local(hass: HomeAssistant, payload: dict) -> tuple[dict, int]:
