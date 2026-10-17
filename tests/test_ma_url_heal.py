@@ -17,16 +17,32 @@ Two halves are pinned here:
    call is the one workaround we hand an affected household: a silently-dropped repair looks to the
    user like one more thing that did not work.
 
-The probe is exercised for real through `aioresponses` rather than monkeypatched, so the timeout
-and exception handling in `async_ma_url_answers` are actually covered.
-
 ⚠️ Each assertion below was shown able to fail; the injection is named per test.
+
+---
+
+🔴 **PORTED OFF `aioresponses` 2026-10-17, AND THE PORT IS THE POINT.** This file used to patch
+aiohttp's internals via `aioresponses`, which stopped working when aiohttp changed them:
+`ClientResponse.__init__() missing 1 required keyword-only argument: 'stream_writer'`. 0.7.9 is the
+newest release there is, so there was nothing to upgrade to. It now uses `tests/fake_http.py`,
+injected at our own seam, which is version-proof by construction because we own the surface.
+
+⚠️ **What the old version cost is the part worth remembering, because three RED tests were the
+cheap half.** On HA 2026.9.3 the `integration` fixture's mock served NOTHING — measured on both
+lanes side by side: `last_update_success=False` and `data=None` on current, `True` and the real
+payload on floor. Two tests using that fixture **passed anyway**, because their assertions only
+ever touched the token store, never the device data. So the broken instrument produced three
+honest reds and two green NON-ANSWERS, and only the reds were visible.
+
+⇒ **Every leg below asserts on `fake.requests`.** An injection that silently misses now reds the
+test instead of passing quietly. That assertion is not ceremony — it is the only thing that
+distinguishes "the code did the right thing" from "the code was never reached".
 """
 import asyncio
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from aioresponses import aioresponses
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
@@ -38,6 +54,9 @@ from custom_components.dashie.music_token_store import (
     MusicTokenStore,
     async_ma_url_answers,
 )
+
+from .fake_http import FakeResponse, FakeSession
+from .fake_http_wiring import patch_sessions
 
 DOMAIN = "dashie"
 IPV4 = "192.168.23.96"
@@ -54,6 +73,22 @@ def _clear_probe_cache():
     music_token_store._probe_cache.clear()
     yield
     music_token_store._probe_cache.clear()
+
+
+@contextmanager
+def probe_session(fake: FakeSession):
+    """Route the PROBE's session at `fake`.
+
+    `async_ma_url_answers` asks HA for the shared session (music_token_store.py:77), so the
+    seam is that module's own imported name. `patch_sessions` does this too, among four other
+    modules — this narrower helper is for the legs that need no coordinator at all.
+
+    create=False deliberately: if the import ever moves, the patch must FAIL rather than
+    quietly cover nothing.
+    """
+    with patch("custom_components.dashie.music_token_store.async_get_clientsession",
+               return_value=fake, create=False):
+        yield fake
 
 
 class _Request:
@@ -84,14 +119,16 @@ async def test_a_host_that_answers_counts_as_reachable(hass: HomeAssistant) -> N
 
     Injection: treating only 2xx as reachable reds the 401 case.
     """
-    with aioresponses() as mock:
-        mock.get(f"{LIVE_MA}/", status=200)
+    fake = FakeSession({LIVE_MA: FakeResponse(status=200)})
+    with probe_session(fake):
         assert await async_ma_url_answers(hass, LIVE_MA) is True
+    assert fake.requests, "the probe never reached the fake — this leg measured nothing"
 
     music_token_store._probe_cache.clear()
-    with aioresponses() as mock:
-        mock.get(f"{LIVE_MA}/", status=401)
+    fake = FakeSession({LIVE_MA: FakeResponse(status=401)})
+    with probe_session(fake):
         assert await async_ma_url_answers(hass, LIVE_MA) is True
+    assert fake.requests
 
 
 async def test_a_host_that_does_not_answer_counts_as_absent(hass: HomeAssistant) -> None:
@@ -99,28 +136,66 @@ async def test_a_host_that_does_not_answer_counts_as_absent(hass: HomeAssistant)
 
     Injection: dropping OSError from the except clause makes this raise instead of returning False.
     """
-    with aioresponses() as mock:
-        mock.get(f"{DEAD_MA}/", exception=asyncio.TimeoutError())
+    fake = FakeSession({DEAD_MA: asyncio.TimeoutError()})
+    with probe_session(fake):
         assert await async_ma_url_answers(hass, DEAD_MA) is False
+    assert fake.requests
 
     music_token_store._probe_cache.clear()
-    with aioresponses() as mock:
-        mock.get(f"{DEAD_MA}/", exception=OSError("connection refused"))
+    fake = FakeSession({DEAD_MA: OSError("connection refused")})
+    with probe_session(fake):
         assert await async_ma_url_answers(hass, DEAD_MA) is False
+    assert fake.requests
+
+
+async def test_a_host_that_hangs_is_cut_off_by_the_real_timeout(hass: HomeAssistant) -> None:
+    """NEW with the port, and it covers what `aioresponses` never did.
+
+    The old version routed `exception=asyncio.TimeoutError()` — which RAISES the exception the
+    timeout would have raised, and so never executed `asyncio.timeout` at all. The stale-host
+    case in the field is a host that ACCEPTS and then hangs, which is the wrapper's job.
+
+    Here the session genuinely sleeps past the budget, so `asyncio.timeout` is the thing that
+    ends the call. The budget is shortened to keep the suite fast; the sleep is 20x it.
+
+    Injection: removing the `async with asyncio.timeout(...)` wrapper hangs this test instead
+    of passing it — which is a failure, and loudly so.
+    """
+    class _Hangs(FakeSession):
+        def get(self, url, params=None, **kwargs):
+            self._record("GET", str(url), kwargs)
+
+            class _Ctx:
+                async def __aenter__(_self):
+                    await asyncio.sleep(1.0)
+                    raise AssertionError("the timeout did not fire")
+
+                async def __aexit__(_self, *exc):
+                    return False
+
+            return _Ctx()
+
+    fake = _Hangs(default=FakeResponse(status=200))
+    with probe_session(fake), patch.object(music_token_store, "PROBE_TIMEOUT_SEC", 0.05):
+        assert await async_ma_url_answers(hass, DEAD_MA) is False
+    assert fake.requests, "the probe never reached the fake — this leg measured nothing"
 
 
 async def test_the_probe_result_is_cached(hass: HomeAssistant) -> None:
-    """One mocked response, two calls: the second must not reach the network.
+    """Two calls, one request: the second must not reach the network.
 
-    Without the cache every auth failure re-probes. aioresponses raises on an unmatched request,
-    so a second network call fails this test rather than passing quietly.
+    Without the cache every auth failure re-probes. The old version relied on `aioresponses`
+    raising for an unmatched request; the fake's own URL log is a direct count instead, which
+    says what happened rather than depending on a library's error behavior.
 
-    Injection: removing the cache lookup reds this.
+    Injection: removing the cache lookup makes this 2 and reds the assertion.
     """
-    with aioresponses() as mock:
-        mock.get(f"{LIVE_MA}/", status=200)  # exactly one
+    fake = FakeSession({LIVE_MA: FakeResponse(status=200)})
+    with probe_session(fake):
         assert await async_ma_url_answers(hass, LIVE_MA) is True
         assert await async_ma_url_answers(hass, LIVE_MA) is True
+
+    assert len(fake.requests) == 1, f"the second call re-probed: {fake.requests}"
 
 
 # ── the GET view ───────────────────────────────────────────────────────────────────────────
@@ -136,10 +211,11 @@ async def test_get_withholds_an_unreachable_url_but_keeps_the_token(hass: HomeAs
     DELETE path instead of withholding reds the token assertion.
     """
     await _store_with(hass, TOKEN, DEAD_MA)
-    with aioresponses() as mock:
-        mock.get(f"{DEAD_MA}/", exception=asyncio.TimeoutError())
+    fake = FakeSession({DEAD_MA: asyncio.TimeoutError()})
+    with probe_session(fake):
         payload = await _json(await DashieMusicTokenView().get(_Request(hass)))
 
+    assert fake.requests, "the view never probed — the withhold was not exercised"
     assert payload["ma_url"] == "", "a url nothing answers must not be handed to a device"
     assert payload["token"] == TOKEN, "the token must survive a withheld url"
 
@@ -153,10 +229,11 @@ async def test_get_passes_a_reachable_url_through_unchanged(hass: HomeAssistant)
     Injection: withholding unconditionally reds this.
     """
     await _store_with(hass, TOKEN, LIVE_MA)
-    with aioresponses() as mock:
-        mock.get(f"{LIVE_MA}/", status=200)
+    fake = FakeSession({LIVE_MA: FakeResponse(status=200)})
+    with probe_session(fake):
         payload = await _json(await DashieMusicTokenView().get(_Request(hass)))
 
+    assert fake.requests, "the view never probed — a pass-through that probed nothing proves nothing"
     assert payload["ma_url"] == LIVE_MA
     assert payload["token"] == TOKEN
 
@@ -167,11 +244,17 @@ async def test_delete_clears_the_stored_value(hass: HomeAssistant) -> None:
     It is the "clear the poisoned value" operation the deadlock lacked. It drops the token as well
     as the url, which is why it stays manual and why the probe path withholds instead of deleting.
 
+    No session is routed here on purpose: DELETE must not probe. A FakeSession with no routes
+    and no default raises on any request, so a DELETE that grew a probe would red this.
+
     Injection: returning without saving reds the second assertion.
     """
     store = await _store_with(hass, TOKEN, DEAD_MA)
-    payload = await _json(await DashieMusicTokenView().delete(_Request(hass)))
+    fake = FakeSession()
+    with probe_session(fake):
+        payload = await _json(await DashieMusicTokenView().delete(_Request(hass)))
 
+    assert fake.requests == [], "DELETE must not probe the network"
     assert payload == {"cleared": True}
     assert store.get_token() == {}, "a cleared store must serve nothing"
 
@@ -181,27 +264,39 @@ async def test_delete_clears_the_stored_value(hass: HomeAssistant) -> None:
 
 @pytest.fixture
 async def integration(hass: HomeAssistant):
-    """Boot the component so its services exist, with platforms and the device stubbed."""
+    """Boot the component so its services exist, with platforms and the device stubbed.
+
+    🔴 This fixture is the one that was silently dead on HA 2026.9.3 (see the module docstring).
+    It now asserts its own injection worked, so it can never again boot a coordinator that
+    reached nothing while the tests built on it report green.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN, unique_id="dev1", title="Kitchen Tablet",
         data={"host": IPV4, "port": 2323, "device_id": "dev1"},
     )
     entry.add_to_hass(hass)
     hass.set_state(CoreState.running)
-    with aioresponses() as mock, patch(
+    fake = FakeSession({
+        "cmd=deviceInfo": FakeResponse(payload={
+            "deviceID": "dev1", "stableDeviceID": "dev1", "deviceName": "Kitchen",
+        }),
+        "cmd=getRtspStatus": asyncio.TimeoutError(),
+        "cmd=getRtspConfig": asyncio.TimeoutError(),
+    })
+    with patch_sessions(fake), patch(
         "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
         AsyncMock(return_value=True),
     ):
-        mock.get(
-            f"{BASE}/?cmd=deviceInfo&type=json",
-            payload={"deviceID": "dev1", "stableDeviceID": "dev1", "deviceName": "Kitchen"},
-            repeat=True,
-        )
-        mock.get(f"{BASE}/?cmd=getRtspStatus", exception=asyncio.TimeoutError(), repeat=True)
-        mock.get(f"{BASE}/?cmd=getRtspConfig", exception=asyncio.TimeoutError(), repeat=True)
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
-    return entry
+
+        coordinator = hass.data[DOMAIN][entry.entry_id]
+        assert coordinator.last_update_success, (
+            "the fixture's own HTTP injection missed — every test built on it would be a "
+            "non-answer. This is the assertion the aioresponses version did not have."
+        )
+        assert coordinator.data["deviceID"] == "dev1", "the coordinator served someone else's data"
+        yield entry
 
 
 async def test_ma_url_without_a_stored_token_fails_visibly(hass: HomeAssistant, integration) -> None:

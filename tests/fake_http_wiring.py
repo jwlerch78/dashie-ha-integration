@@ -47,7 +47,18 @@ def patch_sessions(fake: FakeSession):
             # 2026.9's socket guard at teardown.
             # create=False is deliberate: if one of these stops importing the name, the
             # patch must FAIL rather than quietly cover nothing.
-            for mod in ("addon_bridge", "camera", "image", "config_flow", "voice_view"):
+            # music_token_store does the same import (music_token_store.py:40), so it
+            # belongs in "every way the integration gets a session".
+            # ⚠️ BUT IT IS COMPLETENESS, NOT A FIX, and the distinction is the point:
+            # as of 2026-10-17 its only production caller is the GET view
+            # (music_token_store.py:133), which no patch_sessions test reaches, so this
+            # entry currently has NO READER and nothing here is load-bearing. It is
+            # listed so that a future test which does reach that view fails loudly on a
+            # moved import instead of quietly opening a real socket.
+            # 🔴 Do not cite it as the cause of the aioresponses damage recorded in
+            # test_ma_url_heal.py — that was the dead mock, not a missing entry here.
+            for mod in ("addon_bridge", "camera", "image", "config_flow", "voice_view",
+                        "music_token_store"):
                 stack.enter_context(patch(
                     f"custom_components.dashie.{mod}.async_get_clientsession",
                     return_value=fake, create=False))

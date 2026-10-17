@@ -24,13 +24,19 @@
 #     serialx          (replaces pyserial)
 #     aiousbwatcher    (new usb dep)
 #     gazetteer-matcher
-# and expect `aioresponses` to be unusable: it has no release compatible with the
-# aiohttp that 2026.9 pulls. Use tests/fake_http.py instead — see its header.
+# ✅ `aioresponses` is GONE as of 2026-10-17, and that is why the current lane is
+# green. It had no release compatible with the aiohttp 2026.9 pulls (0.7.9 is the
+# newest there is), so it could not be upgraded, only replaced. Every test now
+# uses tests/fake_http.py — see its header. Do not add it back: the replacement
+# injects at OUR seam, which no aiohttp release can break.
+#
+# ⚠️ Its last three tests were RED, and that was the CHEAP half of the damage.
+# Two others were GREEN while their mock served nothing — test_ma_url_heal.py's
+# module docstring records the side-by-side measurement. A dead HTTP mock does not
+# announce itself: it only fails the tests whose assertions happen to read the
+# response, and silently passes the rest.
 
 pytest-homeassistant-custom-component==0.13.205
-
-# Being removed: the last tests still using it are migrating to tests/fake_http.py.
-aioresponses==0.7.9
 
 # HA per-component requirements that the integration's platforms pull in.
 zeroconf==0.136.2
