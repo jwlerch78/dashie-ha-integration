@@ -52,7 +52,9 @@ def _sent(password: str, **extra) -> str | None:
 # ── the control: the old form really did corrupt, or none of this matters ─────────────
 
 
-@pytest.mark.parametrize("pw", ["pa#ss", "pa&ss", "pa+ss", "pa\rss", "pa\nss", "pa\tss"])
+@pytest.mark.parametrize(
+    "pw", ["pa#ss", "pa&ss", "pa+ss", "pa\rss", "pa\nss", "pa\tss", "pw%123"]
+)
 def test_control_the_old_interpolated_form_corrupts_these(pw: str) -> None:
     """POSITIVE CONTROL. Reproduces the pre-fix construction and requires it to be WRONG.
 
@@ -70,8 +72,10 @@ def test_control_the_old_interpolated_form_corrupts_these(pw: str) -> None:
 # ── the fix ───────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("pw", ["pa#ss", "pa&ss", "pa+ss", "pa\rss", "pa\nss", "pa\tss"])
-def test_the_six_corrupting_characters_now_survive(pw: str) -> None:
+@pytest.mark.parametrize(
+    "pw", ["pa#ss", "pa&ss", "pa+ss", "pa\rss", "pa\nss", "pa\tss", "pw%123"]
+)
+def test_the_corrupting_characters_now_survive(pw: str) -> None:
     """The headline, one leg per character the control just proved was broken.
 
     Injection: reverting any call site to interpolation reds its own tests; reverting
@@ -84,7 +88,13 @@ def test_the_six_corrupting_characters_now_survive(pw: str) -> None:
     "pw", ["hunter2", "pa=ss", "pa ss", "pa/ss", "pa%ss", "paßss", "pa:ss@evil.com", "?x"]
 )
 def test_passwords_that_always_worked_still_work(pw: str) -> None:
-    """The regression half. A fix that broke the majority case would be a worse bug."""
+    """The regression half. A fix that broke the majority case would be a worse bug.
+
+    ⚠️ `pa%ss` belongs HERE, and that is exactly how the `%` gap hid: `%` only corrupts
+    when followed by two HEX digits, so the benign variant passes through and reads as
+    coverage of the character. `pw%123` is in the corrupting list above. One member of a
+    character class does not answer for the class. (X caught this, 2026-10-19.)
+    """
     assert _sent(pw) == pw
 
 

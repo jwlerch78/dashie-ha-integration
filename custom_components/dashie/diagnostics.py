@@ -83,10 +83,18 @@ async def _fetch_device_log(coordinator) -> list[str]:
         return [f"(connection error fetching diagnostics: {_safe_err(err)})"]
     except Exception as err:  # pragma: no cover - defensive
         # Was _LOGGER.exception, which writes the traceback - and therefore the exception
-        # MESSAGE, and therefore the URL - to home-assistant.log at ERROR, which HA shows
-        # by default. Same credential, second channel. The traceback is worth little for a
-        # single HTTP GET in a ten-line block; a tablet password in a default-level log is
-        # what v1.6.3 already had to fix once.
+        # MESSAGE, and therefore the URL - to home-assistant.log at ERROR. Hardening it was
+        # right, but I described it as a live "second channel" for the >=400 case and that
+        # was WRONG (X, 2026-10-19): ClientResponseError IS a ClientError, so a >=400 is
+        # caught by the handler ABOVE and never reaches here. This branch only sees
+        # NON-ClientError exceptions. The same mistake once made a mutant survive against
+        # this very file - see test_an_unexpected_exception_type_does_not_leak.
+        # 🔴 THE REAL SECOND CHANNEL IS D-332, AND IT IS NOT IN THIS FILE: the coordinator
+        # interpolates `{err}` into UpdateFailed, and HA core logs that at ERROR
+        # (update_coordinator.py:511-513), so the poll publishes the password to
+        # home-assistant.log on a default install. `_safe_err` here does not touch it -
+        # which is the point my own D-318 message made and then did not follow: a
+        # redaction list is not a boundary, and neither is one scrubbed call site.
         _LOGGER.error("Failed to fetch diagnostics from device: %s", _safe_err(err))
         return [f"(error fetching diagnostics: {_safe_err(err)})"]
 

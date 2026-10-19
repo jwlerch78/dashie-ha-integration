@@ -177,7 +177,8 @@ class DashieCoordinator(DataUpdateCoordinator):
 
         🔴 Every device API call goes through here. Do NOT build the URL by hand - the
         password is a query parameter and interpolating it silently corrupts any value
-        containing `#`, `&`, `+`, CR, LF or TAB. See device_api.py for the measurement.
+        containing `#`, `&`, `+`, CR, LF, TAB, or `%` followed by two hex digits.
+        A plain space and `=` are NOT affected. See device_api.py for the measurement.
         """
         return device_api_request(self.base_url, self.password, cmd, **extra)
 

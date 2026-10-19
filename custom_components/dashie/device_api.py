@@ -9,10 +9,23 @@ built the URL by string concatenation:
 Nothing encodes the value, so yarl parses it as URL syntax and SILENTLY CORRUPTS it.
 Measured 2026-10-18 across 25 password values:
 
-    #       -> truncated at the '#'   (parsed as a fragment)
-    &       -> truncated at the '&'   (parsed as the next parameter)
-    +       -> becomes a space
-    CR/LF/TAB -> stripped
+    #        -> truncated at the '#'   (parsed as a fragment)
+    &        -> truncated at the '&'   (parsed as the next parameter)
+    +        -> becomes a space
+    CR/LF/TAB-> stripped
+    %XY      -> percent-DECODED when XY are two hex digits: 'pw%123' arrives as
+                'pw\x123'. 'pa%ss' is untouched, because 'ss' is not hex.
+
+⚠️ THAT LAST ONE WAS MISSING FROM THIS LIST UNTIL X CAUGHT IT (2026-10-19), and the way it
+was missed is worth more than the character. My tests DID exercise '%' - but only
+'pa%ss', which is the BENIGN variant, and it sat in the passes-through list where it
+correctly belonged. Testing one member of a character class and generalising to the class
+is how a gap survives a green suite. '%' is common in generated passwords, and this list
+decides who gets told they were affected.
+
+⚠️ A plain SPACE is NOT corrupted (yarl encodes it), and neither is '='. Do not write
+"whitespace" here - it overstates the blast radius, and over-warning is what we already
+had to walk back once on the 1.6.3 notes.
 
 ⚠️ THE FAILURE IS SILENT AND LOOKS LIKE SOMETHING ELSE. The request is well formed; it
 just carries the wrong secret. The device answers 401, the integration reports
