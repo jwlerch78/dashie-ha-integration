@@ -21,10 +21,25 @@ household cannot debug it and neither can we - and `_fetch_device_info` is the
 coordinator's main poll, so for an affected user it is not one broken entity, it is the
 whole integration.
 
-⚠️ AND IT COMPOSES WITH THE DISCLOSURE FIXED IN THE SAME RELEASE: a corrupted password
-produces a 401, a 401 is what makes someone download diagnostics, and before `_safe_err`
-that file carried the real uncorrupted password. One bug caused the conditions for the
-other.
+🔴 RETRACTED 2026-10-18, SAME DAY IT WAS WRITTEN - THE TWO BUGS DO NOT CHAIN, and the
+refutation was sitting four lines below this paragraph the whole time. I claimed a
+corrupted password produces a 401, the 401 makes someone download diagnostics, and that
+file then leaked the real password. It cannot happen: `_fetch_device_log` is one of the
+TWO sites that ALREADY used `params=`, so the diagnostics request sends the password
+CORRECTLY ENCODED. A household whose password contains `#`/`&`/`+`/whitespace is
+therefore precisely the one whose diagnostics fetch SUCCEEDS (200, no exception, no
+leak) while its coordinator poll 401s.
+
+The error was conflating two different requests: "the coordinator gets a 401" is not
+"the diagnostics fetch gets a >=400". Kept rather than deleted because the shape is
+worth recognising - a causal story between two bugs found in the same hour is exactly
+the kind that gets repeated by everyone downstream, and this one was relayed onward
+before it was checked.
+
+What IS true and needs no chain: the disclosure fires on ANY >=400 for the diagnostics
+command, and the likeliest cause is a genuinely wrong or stale password - which is why
+the household debugging "why is Dashie unavailable" was the one most likely to publish
+its own password. That correlation is within the one bug, not between the two.
 
 ✅ `params=` is the fix, and aiohttp/yarl encode it correctly. This was ALREADY the form
 at two of the eight sites (`coordinator.async_send`, `diagnostics._fetch_device_log`),

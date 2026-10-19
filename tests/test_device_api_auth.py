@@ -14,10 +14,12 @@ formed, it just carries the wrong secret: the device answers 401, the integratio
 not one broken entity - the whole integration fails, and the stored password is correct,
 so nobody can find it by re-reading settings.
 
-⚠️ IT ALSO CAUSES THE CONDITIONS FOR THE DISCLOSURE FIXED ALONGSIDE IT: corrupted
-password -> 401 -> the household downloads diagnostics to find out why -> before
-`_safe_err` that file carried the real, uncorrupted password. See
-tests/test_diagnostics_no_credential.py.
+🔴 RETRACTED: I claimed this bug CAUSED the disclosure fixed alongside it (corrupted
+password -> 401 -> download diagnostics -> leak). It does not. `_fetch_device_log` is
+one of the two sites that already used `params=`, so a corrupted password household's
+diagnostics fetch SUCCEEDS and leaks nothing. The refuting fact is in the next paragraph
+of this very docstring, which I wrote at the same time. Two bugs in one file in one hour
+is not evidence that one causes the other.
 
 ⚠️ `params=` was ALREADY the correct form at two of the ten sites (`async_send`,
 `_fetch_device_log`), so the right pattern was in the file the whole time and eight
