@@ -71,10 +71,7 @@ async def _fetch_device_log(coordinator) -> list[str]:
     """
     try:
         session = await coordinator._get_session()
-        params = {"cmd": "getDiagnosticsLog"}
-        if coordinator.password:
-            params["password"] = coordinator.password
-        url = f"{coordinator.base_url}/"
+        url, params = coordinator.api_request("getDiagnosticsLog")
         async with asyncio.timeout(15):
             async with session.get(url, params=params) as response:
                 response.raise_for_status()

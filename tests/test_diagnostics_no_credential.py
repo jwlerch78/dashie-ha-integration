@@ -29,6 +29,7 @@ import asyncio
 import aiohttp
 import pytest
 
+from custom_components.dashie.device_api import device_api_request
 from custom_components.dashie.diagnostics import _fetch_device_log, _safe_err
 
 from .fake_http import FakeResponse, FakeSession
@@ -39,7 +40,20 @@ LEAKY_URL = f"{BASE}/?cmd=getDiagnosticsLog&password={SECRET}"
 
 
 class _Coordinator:
-    """`_fetch_device_log` touches exactly three attributes."""
+    """The surface `_fetch_device_log` actually uses.
+
+    🔴 `api_request` DELEGATES TO THE REAL HELPER rather than faking a URL, and that is
+    deliberate: a stub that invents its own URL would stop exercising the production
+    construction, which is the thing carrying the credential.
+
+    ⚠️ AND THIS STUB BEING INCOMPLETE ONCE PASSED SILENTLY. When `_fetch_device_log` moved
+    onto `coordinator.api_request()`, this class did not have it yet, so every call raised
+    AttributeError before any request happened — and the two LEAK legs still went green,
+    because an AttributeError contains no password. They passed while measuring nothing.
+    What caught it was `test_the_payload_still_says_what_went_wrong`, the leg that checks
+    the output is still USEFUL. That is trap 345 again: the subject left the measured set
+    and the safety assertion could not tell.
+    """
 
     def __init__(self, outcome) -> None:
         self.password = SECRET
@@ -48,6 +62,9 @@ class _Coordinator:
 
     async def _get_session(self):
         return self._session
+
+    def api_request(self, cmd, /, **extra):
+        return device_api_request(self.base_url, self.password, cmd, **extra)
 
 
 # ── the control: the leak has to be real, or nothing below means anything ──────────────

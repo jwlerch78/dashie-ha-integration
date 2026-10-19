@@ -120,12 +120,10 @@ class DashieCamera(DashieEntity, Camera):
         try:
             # Reuse HA's shared session (don't spin up a per-call session/connector).
             session = async_get_clientsession(self.coordinator.hass)
-            url = f"{self.coordinator.base_url}/?cmd=getCamshot"
-            if self.coordinator.password:
-                url += f"&password={self.coordinator.password}"
+            url, params = self.coordinator.api_request("getCamshot")
 
             timeout = aiohttp.ClientTimeout(total=15, connect=5)
-            async with session.get(url, timeout=timeout) as response:
+            async with session.get(url, params=params, timeout=timeout) as response:
                 if response.status == 200:
                     content_type = response.headers.get("Content-Type", "")
                     if "image" in content_type:
@@ -184,12 +182,10 @@ class DashieCamera(DashieEntity, Camera):
         # Fallback: fetch directly from device (for immediate response)
         try:
             session = async_get_clientsession(self.coordinator.hass)
-            url = f"{self.coordinator.base_url}/?cmd=getRtspStatus"
-            if self.coordinator.password:
-                url += f"&password={self.coordinator.password}"
+            url, params = self.coordinator.api_request("getRtspStatus")
 
             timeout = aiohttp.ClientTimeout(total=15, connect=5)
-            async with session.get(url, timeout=timeout) as response:
+            async with session.get(url, params=params, timeout=timeout) as response:
                 if response.status == 200:
                     data = await response.json()
                     if data.get("isStreaming"):

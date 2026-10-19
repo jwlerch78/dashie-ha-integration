@@ -55,12 +55,10 @@ class DashieScreenshot(DashieEntity, ImageEntity):
         try:
             # Reuse HA's shared session (don't spin up a per-call session/connector).
             session = async_get_clientsession(self.coordinator.hass)
-            url = f"{self.coordinator.base_url}/?cmd={API_GET_SCREENSHOT}"
-            if self.coordinator.password:
-                url += f"&password={self.coordinator.password}"
+            url, params = self.coordinator.api_request(API_GET_SCREENSHOT)
 
             timeout = aiohttp.ClientTimeout(total=15, connect=5)
-            async with session.get(url, timeout=timeout) as response:
+            async with session.get(url, params=params, timeout=timeout) as response:
                 if response.status == 200:
                     content_type = response.headers.get("Content-Type", "")
                     if "image" in content_type:

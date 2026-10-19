@@ -12,6 +12,7 @@ from homeassistant.const import CONF_HOST, CONF_PORT, CONF_PASSWORD
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .device_api import device_api_request
 from .const import (
     DOMAIN,
     DEFAULT_PORT,
@@ -348,11 +349,16 @@ class DashieConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Fetch device info from the device."""
         # Reuse HA's shared client session (don't spin up a per-call session).
         session = async_get_clientsession(self.hass)
-        url = f"http://{_host_for_url(self._host)}:{self._port}/?cmd=deviceInfo&type=json"
-        if self._password:
-            url += f"&password={self._password}"
+        url, params = device_api_request(
+            f"http://{_host_for_url(self._host)}:{self._port}",
+            self._password,
+            "deviceInfo",
+            type="json",
+        )
 
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15, connect=5)) as response:
+        async with session.get(
+            url, params=params, timeout=aiohttp.ClientTimeout(total=15, connect=5)
+        ) as response:
             response.raise_for_status()
             data = await response.json()
 
@@ -399,12 +405,16 @@ class DashieOptionsFlow(config_entries.OptionsFlow):
 
                 try:
                     session = async_get_clientsession(self.hass)
-                    url = f"http://{_host_for_url(host)}:{new_port}/?cmd=deviceInfo&type=json"
-                    if new_password:
-                        url += f"&password={new_password}"
+                    url, params = device_api_request(
+                        f"http://{_host_for_url(host)}:{new_port}",
+                        new_password,
+                        "deviceInfo",
+                        type="json",
+                    )
 
                     async with session.get(
-                        url, timeout=aiohttp.ClientTimeout(total=15, connect=5)
+                        url, params=params,
+                        timeout=aiohttp.ClientTimeout(total=15, connect=5),
                     ) as response:
                         response.raise_for_status()
                         data = await response.json()

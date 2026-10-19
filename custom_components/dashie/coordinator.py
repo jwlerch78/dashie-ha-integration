@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .commands import NO_RESPONSE, REFUSED, CommandResult, DashieCommandError, failure_message
 from .const import DEFAULT_SCAN_INTERVAL, API_DEVICE_INFO, host_for_url
+from .device_api import device_api_request
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -171,15 +172,22 @@ class DashieCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Unexpected error with device at %s: %s", self.host, err)
             raise UpdateFailed(f"Unexpected error: {err}") from err
 
+    def api_request(self, cmd: str, **extra: str) -> tuple[str, dict[str, str]]:
+        """`(url, params)` for a device API command, with the password safely encoded.
+
+        🔴 Every device API call goes through here. Do NOT build the URL by hand - the
+        password is a query parameter and interpolating it silently corrupts any value
+        containing `#`, `&`, `+`, CR, LF or TAB. See device_api.py for the measurement.
+        """
+        return device_api_request(self.base_url, self.password, cmd, **extra)
+
     async def _fetch_device_info(self) -> dict:
         """Fetch device info from the device API."""
         session = await self._get_session()
 
-        url = f"{self.base_url}/?cmd={API_DEVICE_INFO}&type=json"
-        if self.password:
-            url += f"&password={self.password}"
+        url, params = self.api_request(API_DEVICE_INFO, type="json")
 
-        async with session.get(url) as response:
+        async with session.get(url, params=params) as response:
             response.raise_for_status()
             data = await response.json()
 
@@ -233,11 +241,9 @@ class DashieCoordinator(DataUpdateCoordinator):
     async def _fetch_rtsp_status(self, session: aiohttp.ClientSession) -> dict | None:
         """Fetch RTSP stream status from the device."""
         try:
-            url = f"{self.base_url}/?cmd=getRtspStatus"
-            if self.password:
-                url += f"&password={self.password}"
+            url, params = self.api_request("getRtspStatus")
 
-            async with session.get(url) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     if data.get("status") != "ERROR":
@@ -249,11 +255,9 @@ class DashieCoordinator(DataUpdateCoordinator):
     async def _fetch_rtsp_config(self, session: aiohttp.ClientSession) -> dict | None:
         """Fetch RTSP configuration from the device."""
         try:
-            url = f"{self.base_url}/?cmd=getRtspConfig"
-            if self.password:
-                url += f"&password={self.password}"
+            url, params = self.api_request("getRtspConfig")
 
-            async with session.get(url) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     if data.get("status") != "ERROR":
@@ -453,12 +457,7 @@ class DashieCoordinator(DataUpdateCoordinator):
         """Send a command to the Dashie device and describe the outcome."""
         try:
             session = await self._get_session()
-            params = {"cmd": command}
-            if self.password:
-                params["password"] = self.password
-            params.update(kwargs)
-
-            url = f"{self.base_url}/"
+            url, params = self.api_request(command, **kwargs)
             async with session.get(url, params=params) as response:
                 # Read the body before raising. The device answers a refused
                 # command with HTTP 400 and a structured
